@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-VERSION="v1.0.0"
+VERSION="v1.0.1"
 
 # ==================================================
 # Configuration

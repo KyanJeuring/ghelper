@@ -351,7 +351,10 @@ EOF
   fi
 
   info "Checking SSH access for $user/$repo"
-  if git ls-remote "$ssh_url" >/dev/null 2>&1; then
+  local ssh_check_err
+  ssh_check_err="$(git ls-remote "$ssh_url" 2>&1 >/dev/null || true)"
+
+  if [[ -z "$ssh_check_err" ]]; then
     info "Cloning $user/$repo via SSH ($host)"
     if git clone "$ssh_url" "$target"; then
       ok "Clone complete -> $target"
@@ -360,6 +363,12 @@ EOF
       return 1
     fi
     return 0
+  fi
+
+  if [[ "$ssh_check_err" == *"Repository not found"* ]]; then
+    err "Repository not found: $user/$repo on $host"
+    err "Check that the repository name, username, and host are correct"
+    return 1
   fi
 
   warn "SSH access failed for $ssh_url"

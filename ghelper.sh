@@ -2096,7 +2096,7 @@ EOF
     return 0
   fi
 
-  # shellcheck disable=SC2317
+  # shellcheck disable=SC2317,SC2329
   cleanup() {
     git merge --abort >/dev/null 2>&1 || true
     git switch "$original" >/dev/null 2>&1 || \
@@ -2826,7 +2826,7 @@ EOF
 
   original=$(git branch --show-current)
 
-  # shellcheck disable=SC2317
+  # shellcheck disable=SC2317,SC2329
   cleanup() {
     git rebase --abort >/dev/null 2>&1 || true
     git merge --abort >/dev/null 2>&1 || true

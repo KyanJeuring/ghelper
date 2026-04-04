@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-VERSION="v1.0.1"
+GHELPER_VERSION="v1.0.1"
 
 # ==================================================
 # Configuration
@@ -204,7 +204,7 @@ ghelp() {
 
 ## Show GHelper version
 gversion() {
-  echo "GHelper $VERSION"
+  echo "GHelper $GHELPER_VERSION"
 }
 
 # ==================================================

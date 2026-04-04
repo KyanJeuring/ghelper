@@ -124,6 +124,11 @@ _branch_exists() {
   git show-ref --verify --quiet "refs/remotes/origin/$1"
 }
 
+### Get a writable temporary directory (internal)
+_tmp_dir() {
+  printf '%s' "${TMPDIR:-${TEMP:-${TMP:-/tmp}}}"
+}
+
 # ==================================================
 # GHelper command listing
 # ==================================================
@@ -1172,6 +1177,7 @@ EOF
 # ==================================================
 
 ## Stage all changes
+# shellcheck disable=SC2120
 ga() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
@@ -1219,6 +1225,7 @@ EOF
     return 0
   fi
 
+  # shellcheck disable=SC2119
   ga || return 1
 
   if [[ $# -eq 0 ]]; then
@@ -2083,7 +2090,7 @@ EOF
     return 0
   fi
 
-  LOCKDIR="/tmp/git-merge.lock"
+  LOCKDIR="$(_tmp_dir)/git-merge.lock"
   if ! mkdir "$LOCKDIR" 2>/dev/null; then
     err "Another merge is already running"
     return 0
@@ -2811,7 +2818,7 @@ EOF
     return 0
   fi
 
-  LOCKDIR="/tmp/git-promote.lock"
+  LOCKDIR="$(_tmp_dir)/git-promote.lock"
   if ! mkdir "$LOCKDIR" 2>/dev/null; then
     err "Another promote is already running"
     return 0

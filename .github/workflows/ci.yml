@@ -58,4 +58,4 @@ jobs:
       # Runtime check
       - name: Run version command
         shell: bash
-        run: ./ghelper.sh dversion
+        run: ./ghelper.sh gversion

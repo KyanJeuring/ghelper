@@ -79,7 +79,7 @@ _guard_main_rewrite() {
   local protected
 
   branch=$(git branch --show-current 2>/dev/null) || return 1
-  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null) || true
+  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null) || true
 
   commit_hash=$(git rev-parse --short HEAD 2>/dev/null) || return 1
   commit_msg=$(git log -1 --pretty=%s 2>/dev/null) || return 1
@@ -401,7 +401,7 @@ EOF
     return 0
   fi
 
-  groot || return 1
+  groot "$@" || return 1
 
   if [[ -f .gitignore ]]; then
     warn ".gitignore already exists in repo root"
@@ -441,7 +441,7 @@ EOF
     return 0
   fi
 
-  groot || return 1
+  groot "$@" || return 1
 
   if [[ -f .gitattributes ]]; then
     warn ".gitattributes already exists in repo root"
@@ -622,10 +622,9 @@ EOF
     C_STAGED="\033[0;32m"
     C_UNSTAGED="\033[0;33m"
     C_UNTRACKED="\033[0;31m"
-    C_RENAME="\033[0;36m"
     C_RESET="\033[0m"
   else
-    C_STAGED=""; C_UNSTAGED=""; C_UNTRACKED=""; C_RENAME=""; C_RESET=""
+    C_STAGED=""; C_UNSTAGED=""; C_UNTRACKED=""; C_RESET=""
   fi
 
   _gs_line() {
@@ -655,7 +654,7 @@ EOF
   branch="$(git branch --show-current)"
   local_head="$(git rev-parse --short HEAD)"
 
-  if upstream="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)"; then
+  if upstream="$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null)"; then
     read -r behind ahead < <(
       git rev-list --left-right --count "$upstream"...HEAD
     )
@@ -878,7 +877,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 1
   fi
 
@@ -912,7 +911,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 1
   fi
 
@@ -946,7 +945,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 1
   fi
 
@@ -984,7 +983,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 1
   fi
 
@@ -1026,7 +1025,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 1
   fi
 
@@ -1118,7 +1117,7 @@ EOF
 
   local url host repo
 
-  groot || return 1
+  groot "$@" || return 1
 
   url=$(git remote get-url origin 2>/dev/null) || {
     err "No origin remote found"
@@ -1157,9 +1156,9 @@ EOF
 
   local b upstream ahead behind
   b=$(git branch --show-current 2>/dev/null) || return 1
-  upstream=$(git rev-parse --abbrev-ref @{u} 2>/dev/null || echo "-")
-  ahead=$(git rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
-  behind=$(git rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
+  upstream=$(git rev-parse --abbrev-ref "@{u}" 2>/dev/null || echo "-")
+  ahead=$(git rev-list --count "@{u}..HEAD" 2>/dev/null || echo 0)
+  behind=$(git rev-list --count "HEAD..@{u}" 2>/dev/null || echo 0)
 
   info "Git context"
   printf "  Branch:   %s\n" "$b"
@@ -1300,7 +1299,7 @@ EOF
   fi
 
   local upstream
-  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)
 
   if [[ -n "$upstream" ]] && git merge-base --is-ancestor HEAD "$upstream"; then
     warn "Last commit is already pushed to $upstream"
@@ -1844,8 +1843,8 @@ EOF
     return 0
   fi
 
-  if git rev-parse @{u} >/dev/null 2>&1; then
-    ahead=$(git rev-list --count @{u}..HEAD)
+  if git rev-parse "@{u}" >/dev/null 2>&1; then
+    ahead=$(git rev-list --count "@{u}..HEAD")
     if [[ "$ahead" -eq 0 ]]; then
       err "Latest commit is already pushed to upstream"
       return 0
@@ -1942,7 +1941,7 @@ EOF
   local branch commit_count
   branch=$(git branch --show-current)
 
-  [[ -z "$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)" ]] && {
+  [[ -z "$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null)" ]] && {
     err "No upstream branch set"
     return 0
   }
@@ -1985,7 +1984,7 @@ EOF
   local branch commit_count
   branch=$(git branch --show-current)
 
-  [[ -z "$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)" ]] && {
+  [[ -z "$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null)" ]] && {
     err "No upstream branch set"
     return 0
   }
@@ -2090,6 +2089,7 @@ EOF
     return 0
   fi
 
+  # shellcheck disable=SC2317
   cleanup() {
     git merge --abort >/dev/null 2>&1 || true
     git switch "$original" >/dev/null 2>&1 || \
@@ -2192,7 +2192,7 @@ EOF
     return 0
   }
 
-  groot || return 0
+  groot "$@" || return 0
 
   if ! git diff --quiet || ! git diff --cached --quiet; then
     err "Working tree is dirty"
@@ -2485,7 +2485,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 0
   fi
 
@@ -2518,7 +2518,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 0
   fi
 
@@ -2555,7 +2555,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 0
   fi
 
@@ -2592,7 +2592,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 0
   fi
 
@@ -2643,7 +2643,7 @@ EOF
     return 0
   fi
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 0
   fi
 
@@ -2716,7 +2716,7 @@ EOF
 
   local remote="${1:-origin}"
 
-  if ! groot; then
+  if ! groot "$@"; then
     return 0
   fi
 
@@ -2819,6 +2819,7 @@ EOF
 
   original=$(git branch --show-current)
 
+  # shellcheck disable=SC2317
   cleanup() {
     git rebase --abort >/dev/null 2>&1 || true
     git merge --abort >/dev/null 2>&1 || true
@@ -2843,7 +2844,7 @@ EOF
   info "Fetching latest refs"
   git fetch origin || return 1
 
-  if [[ -z "$(git log origin/$TARGET_BRANCH..$SRC_BRANCH --oneline)" ]]; then
+  if [[ -z "$(git log origin/"$TARGET_BRANCH".."$SRC_BRANCH" --oneline)" ]]; then
     info "Nothing to promote ($SRC_BRANCH == $TARGET_BRANCH)"
     return 0
   fi

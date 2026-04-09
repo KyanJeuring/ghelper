@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.0.2"
+GHELPER_VERSION="v1.1.0"
 
 # ==================================================
 # Configuration
@@ -1196,19 +1196,28 @@ ga() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
 USAGE:
-  ga
+  ga [<path>...]
 
 OPTIONS:
   -h, --help    Show this help message
 
 EXAMPLES:
-  ga            # Stage all changes in the working tree
+  ga                                 # Stage all changes in the working tree
+  ga path/to/file.txt                # Stage one file
+  ga path/file1.txt path/file2.txt   # Stage multiple files
+  ga src/ docs/                      # Stage multiple paths
 EOF
     return 0
   fi
 
-  git add .
-  ok "All changes staged"
+  if [[ $# -eq 0 ]]; then
+    git add .
+    ok "All changes staged"
+    return 0
+  fi
+
+  git add -- "$@"
+  ok "Selected path(s) staged"
 }
 
 ## Commit staged changes
@@ -1407,27 +1416,44 @@ gr() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
 USAGE:
-  gr
+  gr [<path>...]
 
 OPTIONS:
   -h, --help    Show this help message
 
 EXAMPLES:
-  gr            # Discard all unstaged changes (prompts for confirmation)
+  gr                                 # Discard all unstaged changes
+  gr path/to/file.txt                # Discard unstaged changes in one file
+  gr path/file1.txt path/file2.txt   # Discard unstaged changes in multiple files
+  gr src/ docs/                      # Discard unstaged changes in multiple paths
 EOF
     return 0
   fi
 
-  if git diff --quiet; then
-    info "No unstaged changes to restore"
+  if [[ $# -eq 0 ]]; then
+    if git diff --quiet; then
+      info "No unstaged changes to restore"
+      return 0
+    fi
+
+    warn "This will discard ALL unstaged changes"
+    confirm "Continue?" || return 0
+
+    git restore .
+    ok "Changes restored"
     return 0
   fi
 
-  warn "This will discard ALL unstaged changes"
+  if git diff --quiet -- "$@"; then
+    info "No unstaged changes to restore for selected path(s)"
+    return 0
+  fi
+
+  warn "This will discard unstaged changes in selected path(s)"
   confirm "Continue?" || return 0
 
-  git restore .
-  ok "Changes restored"
+  git restore -- "$@"
+  ok "Selected path(s) restored"
 }
 
 ## Restore staged changes
@@ -1435,27 +1461,44 @@ grs() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
 USAGE:
-  grs
+  grs [<path>...]
 
 OPTIONS:
   -h, --help    Show this help message
 
 EXAMPLES:
-  grs           # Unstage all staged changes (prompts for confirmation)
+  grs                                 # Unstage all staged changes
+  grs path/to/file.txt                # Unstage one file
+  grs path/file1.txt path/file2.txt   # Unstage multiple files
+  grs src/ docs/                      # Unstage multiple paths
 EOF
     return 0
   fi
 
-  if git diff --cached --quiet; then
-    info "No staged changes to restore"
+  if [[ $# -eq 0 ]]; then
+    if git diff --cached --quiet; then
+      info "No staged changes to restore"
+      return 0
+    fi
+
+    warn "This will unstage ALL staged changes"
+    confirm "Continue?" || return 0
+
+    git restore --staged .
+    ok "Staged changes restored"
     return 0
   fi
 
-  warn "This will unstage ALL staged changes"
+  if git diff --cached --quiet -- "$@"; then
+    info "No staged changes to restore for selected path(s)"
+    return 0
+  fi
+
+  warn "This will unstage selected path(s)"
   confirm "Continue?" || return 0
 
-  git restore --staged .
-  ok "Staged changes restored"
+  git restore --staged -- "$@"
+  ok "Selected path(s) unstaged"
 }
 
 ## Clean working tree (discard all uncommitted changes)

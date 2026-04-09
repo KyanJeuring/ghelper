@@ -176,10 +176,15 @@ ghelp() {
     # Documented public commands
     /^## / && in_section {
       desc = substr($0, 4)
-      getline
+      while (getline > 0) {
+        if ($0 ~ /^[[:space:]]*$/) continue
+        if ($0 ~ /^[[:space:]]*# shellcheck/) continue
+        break
+      }
 
-      if ($0 ~ /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/) {
+      if ($0 ~ /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*\(\)/) {
         name = $0
+        sub(/^[[:space:]]*/, "", name)
         sub(/\(\).*/, "", name)
 
         # Ignore internal helpers

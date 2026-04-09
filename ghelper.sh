@@ -1206,6 +1206,9 @@ EXAMPLES:
   ga path/to/file.txt                # Stage one file
   ga path/file1.txt path/file2.txt   # Stage multiple files
   ga src/ docs/                      # Stage multiple paths
+  ga path/*.txt                      # Stage files matching a wildcard
+  ga */path                          # Stage matching paths one level deep
+  ga path/*/something                # Stage matching nested paths
 EOF
     return 0
   fi
@@ -1426,6 +1429,9 @@ EXAMPLES:
   gr path/to/file.txt                # Discard unstaged changes in one file
   gr path/file1.txt path/file2.txt   # Discard unstaged changes in multiple files
   gr src/ docs/                      # Discard unstaged changes in multiple paths
+  gr path/*.txt                      # Discard unstaged changes for wildcard matches
+  gr */path                          # Discard unstaged changes in matching paths
+  gr path/*/something                # Discard unstaged changes in nested matches
 EOF
     return 0
   fi
@@ -1471,6 +1477,9 @@ EXAMPLES:
   grs path/to/file.txt                # Unstage one file
   grs path/file1.txt path/file2.txt   # Unstage multiple files
   grs src/ docs/                      # Unstage multiple paths
+  grs path/*.txt                      # Unstage wildcard-matched files
+  grs */path                          # Unstage matching paths
+  grs path/*/something                # Unstage nested matches
 EOF
     return 0
   fi

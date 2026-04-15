@@ -429,6 +429,26 @@ EOF
     return 1
   fi
 
+  local https_check_err
+  https_check_err="$(git ls-remote "$https_url" 2>&1 >/dev/null || true)"
+
+  local https_check_err_lower
+  https_check_err_lower="$(printf '%s' "$https_check_err" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "$https_check_err_lower" == *"repository not found"* \
+    || "$https_check_err_lower" == *"project not found"* \
+    || "$https_check_err_lower" == *"could not be found"* \
+    || "$https_check_err_lower" == *"not found"* \
+    || "$https_check_err_lower" == *"does not exist"* \
+    || "$https_check_err_lower" == *"access denied"* \
+    || "$https_check_err_lower" == *"authentication failed"* \
+    || "$https_check_err_lower" == *"unauthorized"* \
+    || "$https_check_err_lower" == *"forbidden"* ]]; then
+    err "Repository not found or access denied: $user/$repo on $host"
+    err "Check that the repository name, username, host, and access rights are correct"
+    return 1
+  fi
+
   warn "SSH access failed for $ssh_url"
   warn "This can happen if SSH is not configured or access is not available for $host"
   log

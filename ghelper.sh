@@ -332,32 +332,39 @@ EOF
   if [[ -z "$user" ]]; then
     case "$host" in
       github.com|*.github.com)
-        user="$(
-          git config --global user.username 2>/dev/null \
-          || git config --global github.user 2>/dev/null \
-          || echo ""
-        )"
+        user="$(git config --global --get github.user 2>/dev/null || echo "")"
         ;;
       gitlab.com|*.gitlab.com)
-        user="$(
-          git config --global user.username 2>/dev/null \
-          || git config --global gitlab.user 2>/dev/null \
-          || echo ""
-        )"
-        ;;
-      *)
-        user="$(
-          git config --global user.username 2>/dev/null \
-          || echo ""
-        )"
+        user="$(git config --global --get gitlab.user 2>/dev/null || echo "")"
         ;;
     esac
 
-    [[ -n "$user" ]] || user="${USER:-}"
+    if [[ -z "$user" ]]; then
+      user="$(git config --global --get user.name 2>/dev/null || echo "")"
+    fi
   fi
 
-  if [[ -z "$user" ]]; then
-    err "Could not determine username — pass it explicitly: gclone <repo> <username>"
+  if [[ -z "$user" || ! "$user" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    err "Could not determine a valid username for $host"
+
+    local fallback_name
+    fallback_name="$(git config --global --get user.name 2>/dev/null || echo "")"
+
+    if [[ -n "$fallback_name" ]]; then
+      err "Fallback to user.name ('$fallback_name') failed (not a valid username)"
+    else
+      err "No fallback available from user.name"
+    fi
+
+    log
+    info "Set your username with one of:"
+    info "  git config --global github.user <username>"
+    info "  git config --global gitlab.user <username>"
+    info "Or ensure your git config 'user.name' is a valid username"
+    log
+    info "Or pass it explicitly:"
+    info "  gclone <repo> <username> [host]"
+
     return 1
   fi
 

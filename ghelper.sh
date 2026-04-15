@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.1.0"
+GHELPER_VERSION="v1.2.0"
 
 # ==================================================
 # Configuration
@@ -260,15 +260,17 @@ OPTIONS:
   -h, --help            Show this help message
 
 EXAMPLES:
-  gclone my-repo                          # Clone <gitconfig-user>/my-repo via SSH
-  gclone my-repo other-user              # Clone other-user/my-repo via SSH
-  gclone my-repo other-user github.com   # Clone with explicit host
-  gclone my-repo --https                 # Clone via HTTPS (no SSH key needed)
-  gclone my-repo -t /tmp/mydir           # Clone into a specific directory
+  gclone my-repo                         # Clone <detected-user>/my-repo via SSH
+  gclone my-repo other-user             # Clone other-user/my-repo via SSH
+  gclone my-repo github.com             # Clone from GitHub with detected user
+  gclone my-repo gitlab.com             # Clone from GitLab with detected user
+  gclone my-repo other-user github.com  # Clone from GitHub with explicit user
+  gclone my-repo --https                # Clone via HTTPS (no SSH key needed)
+  gclone my-repo -t /tmp/mydir          # Clone into a specific directory
 
 NOTES:
-  - Username defaults to 'user.name' from git config, falling back to $USER
-  - Host defaults to github.com
+  - Username is detected from Git config based on the selected host (GitHub, GitLab, etc.)
+  - Host defaults to github.com, or $GHELPER_SSH_HOST if set
   - SSH is tried first; if it fails, HTTPS is offered as a fallback
   - Use --https to skip SSH entirely
 EOF
@@ -279,10 +281,6 @@ EOF
   local use_https=0
   local args=()
 
-  user="$(git config --global user.username 2>/dev/null \
-    || git config --global github.user 2>/dev/null \
-    || git config --global user.name 2>/dev/null \
-    || echo "${USER:-}")"
   host="${GHELPER_SSH_HOST:-github.com}"
   target=""
 
@@ -314,7 +312,11 @@ EOF
       ;;
     2)
       repo="${args[0]}"
-      user="${args[1]}"
+      if [[ "${args[1]}" == *.* ]]; then
+        host="${args[1]}"
+      else
+        user="${args[1]}"
+      fi
       ;;
     3)
       repo="${args[0]}"
@@ -326,6 +328,33 @@ EOF
       return 1
       ;;
   esac
+
+  if [[ -z "$user" ]]; then
+    case "$host" in
+      github.com|*.github.com)
+        user="$(
+          git config --global user.username 2>/dev/null \
+          || git config --global github.user 2>/dev/null \
+          || echo ""
+        )"
+        ;;
+      gitlab.com|*.gitlab.com)
+        user="$(
+          git config --global user.username 2>/dev/null \
+          || git config --global gitlab.user 2>/dev/null \
+          || echo ""
+        )"
+        ;;
+      *)
+        user="$(
+          git config --global user.username 2>/dev/null \
+          || echo ""
+        )"
+        ;;
+    esac
+
+    [[ -n "$user" ]] || user="${USER:-}"
+  fi
 
   if [[ -z "$user" ]]; then
     err "Could not determine username — pass it explicitly: gclone <repo> <username>"

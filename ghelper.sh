@@ -260,7 +260,7 @@ OPTIONS:
   -h, --help            Show this help message
 
 EXAMPLES:
-  gclone my-repo                         # Clone <detected-user>/my-repo via SSH
+  gclone my-repo                        # Clone <detected-user>/my-repo via SSH
   gclone my-repo other-user             # Clone other-user/my-repo via SSH
   gclone my-repo github.com             # Clone from GitHub with detected user
   gclone my-repo gitlab.com             # Clone from GitLab with detected user

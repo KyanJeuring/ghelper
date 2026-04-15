@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.2.1"
+GHELPER_VERSION="v1.2.2"
 
 # ==================================================
 # Configuration
@@ -265,6 +265,7 @@ EXAMPLES:
   gclone my-repo github.com             # Clone from GitHub with detected user
   gclone my-repo gitlab.com             # Clone from GitLab with detected user
   gclone my-repo other-user github.com  # Clone from GitHub with explicit user
+  gclone my-repo other-user gitlab.com  # Clone from GitLab with explicit user
   gclone my-repo --https                # Clone via HTTPS (no SSH key needed)
   gclone my-repo -t /tmp/mydir          # Clone into a specific directory
 
@@ -277,7 +278,7 @@ EOF
     return 0
   fi
 
-  local repo user host url target
+  local repo user host target
   local use_https=0
   local args=()
 
@@ -400,7 +401,7 @@ EOF
 
   info "Checking SSH access for $user/$repo"
   local ssh_check_err
-  ssh_check_err="$(git ls-remote "$ssh_url" 2>&1 >/dev/null || true)"
+  ssh_check_err="$(git ls-remote "$ssh_url" >/dev/null 2>&1 || true)"
 
   if [[ -z "$ssh_check_err" ]]; then
     info "Cloning $user/$repo via SSH ($host)"
@@ -413,14 +414,21 @@ EOF
     return 0
   fi
 
-  if [[ "$ssh_check_err" == *"Repository not found"* ]]; then
-    err "Repository not found: $user/$repo on $host"
-    err "Check that the repository name, username, and host are correct"
+  local ssh_check_err_lower
+  ssh_check_err_lower="$(printf '%s' "$ssh_check_err" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "$ssh_check_err_lower" == *"repository not found"* \
+    || "$ssh_check_err_lower" == *"project not found"* \
+    || "$ssh_check_err_lower" == *"not found"* \
+    || "$ssh_check_err_lower" == *"does not exist"* \
+    || "$ssh_check_err_lower" == *"access denied"* ]]; then
+    err "Repository not found or access denied: $user/$repo on $host"
+    err "Check that the repository name, username, host, and access rights are correct"
     return 1
   fi
 
   warn "SSH access failed for $ssh_url"
-  warn "This can happen if no SSH key is configured for $host"
+  warn "This can happen if SSH is not configured or access is not available for $host"
   log
   info "Falling back to HTTPS: $https_url"
   read -rp "Clone via HTTPS instead? [y/N]: " ans

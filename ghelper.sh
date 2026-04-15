@@ -401,7 +401,7 @@ EOF
 
   info "Checking SSH access for $user/$repo"
   local ssh_check_err
-  ssh_check_err="$(git ls-remote "$ssh_url" >/dev/null 2>&1 || true)"
+  ssh_check_err="$(git ls-remote "$ssh_url" 2>&1 >/dev/null || true)"
 
   if [[ -z "$ssh_check_err" ]]; then
     info "Cloning $user/$repo via SSH ($host)"

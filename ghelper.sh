@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.2.0"
+GHELPER_VERSION="v1.2.1"
 
 # ==================================================
 # Configuration

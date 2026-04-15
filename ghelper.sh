@@ -419,9 +419,11 @@ EOF
 
   if [[ "$ssh_check_err_lower" == *"repository not found"* \
     || "$ssh_check_err_lower" == *"project not found"* \
-    || "$ssh_check_err_lower" == *"not found"* \
+    || "$ssh_check_err_lower" == *"could not be found"* \
     || "$ssh_check_err_lower" == *"does not exist"* \
-    || "$ssh_check_err_lower" == *"access denied"* ]]; then
+    || "$ssh_check_err_lower" == *"access denied"* \
+    || "$ssh_check_err_lower" == *"don't have permission"* \
+    || "$ssh_check_err_lower" == *"do not have permission"* ]]; then
     err "Repository not found or access denied: $user/$repo on $host"
     err "Check that the repository name, username, host, and access rights are correct"
     return 1

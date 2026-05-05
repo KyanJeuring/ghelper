@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.2.2"
+GHELPER_VERSION="v1.3.0"
 
 # ==================================================
 # Configuration
@@ -1445,6 +1445,233 @@ EOF
   done
 
   git commit --amend "${args[@]}" && ok "Last commit amended"
+}
+
+## Edit a commit message and/or date
+gce() {
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    cat <<'EOF'
+USAGE:
+  gce [<commit>] [-m <message>...] [-c <co-author>...] [-d <date>]
+  gce [<commit>] [--author-date <date>] [--committer-date <date>]
+
+OPTIONS:
+  -m, --message <message>       Set commit message paragraph (can be used multiple times)
+  -c, --coauthor <co-author>    Add a co-author (can be used multiple times)
+  -d, --date <date>             Set both author and committer date
+  --author-date <date>          Set only author date
+  --committer-date <date>       Set only committer date
+  -h, --help                    Show this help message
+
+EXAMPLES:
+  gce -m 'New message'
+  gce -m 'Title' -m 'Body paragraph'
+  gce -m 'Title' -c 'Alice <alice@example.com>'
+  gce -d '2000-01-01T13:00:00+00:00'
+  gce -d '2000-01-01 13:00:00'
+  gce -d '13:00'
+  gce -d '1PM'
+  gce -d 'yesterday 13:00'
+  gce HEAD -m 'New message' -d '2000-01-01 13:00'
+  gce HEAD~2 -m 'Rewrite older commit'
+  gce HEAD~2 -m 'Rewrite older commit' -c 'Alice <alice@example.com>'
+  gce abc123 -d '2 days ago'
+
+NOTES:
+  - Defaults to HEAD when no commit is provided
+  - Editing older commits rewrites history
+  - The working tree must be clean before editing older commits
+
+DATE INPUT:
+  - Parsed using: date -d '<date>'
+  - If your system does not support this, you may need GNU date or a compatible implementation
+  - Supports formats such as:
+      '2000-01-01T13:00:00+00:00'
+      '2000-01-01 13:00:00'
+      '13:00'
+      '1PM'
+      'tomorrow'
+      'yesterday 13:00'
+      '2 days ago'
+      '2 weeks ago monday'
+      '13:00 2 weeks ago tuesday'
+  - If only a time is provided, the date defaults to today
+  - If no time is provided, the time may default to the current time or 00:00:00
+  - For consistent results, it is recommended to always include a time
+EOF
+    return 0
+  fi
+
+  local commit="HEAD"
+  local author_date=""
+  local committer_date=""
+  local messages=()
+  local coauthors=()
+  local confirm=""
+
+  _gce_normalize_date() {
+    local input="$1"
+    date -d "$input" +"%Y-%m-%dT%H:%M:%S%:z" 2>/dev/null
+  }
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -m|--message)
+        [[ -z "${2:-}" ]] && { err "Missing message value"; return 1; }
+        messages+=("-m" "$2")
+        shift 2
+        ;;
+      -c|--coauthor)
+        [[ -z "${2:-}" ]] && { err "Missing co-author value"; return 1; }
+        coauthors+=("$2")
+        shift 2
+        ;;
+      -d|--date)
+        [[ -z "${2:-}" ]] && { err "Missing date value"; return 1; }
+        author_date="$2"
+        committer_date="$2"
+        shift 2
+        ;;
+      --author-date)
+        [[ -z "${2:-}" ]] && { err "Missing author date value"; return 1; }
+        author_date="$2"
+        shift 2
+        ;;
+      --committer-date)
+        [[ -z "${2:-}" ]] && { err "Missing committer date value"; return 1; }
+        committer_date="$2"
+        shift 2
+        ;;
+      -*)
+        err "Unknown option: $1"
+        return 1
+        ;;
+      *)
+        commit="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ ${#messages[@]} -eq 0 && ${#coauthors[@]} -eq 0 && -z "$author_date" && -z "$committer_date" ]]; then
+    err "Nothing to amend"
+    err "Usage:"
+    err "  gce -m 'New message'"
+    err "  gce -m 'New message' -c 'Co-author <email>'"
+    err "  gce -d '2000-01-01 13:00'"
+    err "  gce HEAD~2 -m 'New message' -d '2000-01-01 13:00'"
+    return 1
+  fi
+
+  if [[ -n "$author_date" ]]; then
+    local original_author_date="$author_date"
+    author_date="$(_gce_normalize_date "$author_date")" || {
+      err "Invalid author date: $original_author_date"
+      warn "Your system date command may not support this format"
+      warn "Required support: date -d '<date>'"
+      warn "If your system does not support this, you may need GNU date or a compatible implementation"
+      return 1
+    }
+  fi
+
+  if [[ -n "$committer_date" ]]; then
+    local original_committer_date="$committer_date"
+    committer_date="$(_gce_normalize_date "$committer_date")" || {
+      err "Invalid committer date: $original_committer_date"
+      warn "Your system date command may not support this format"
+      warn "Required support: date -d '<date>'"
+      warn "If your system does not support this, you may need GNU date or a compatible implementation"
+      return 1
+    }
+  fi
+
+  commit="$(git rev-parse "$commit")" || return 1
+
+  local head
+  head="$(git rev-parse HEAD)" || return 1
+
+  local upstream
+  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)
+
+  if [[ -n "$upstream" ]] && git merge-base --is-ancestor "$commit" "$upstream"; then
+    warn "Commit is already pushed to $upstream"
+    warn "You will need to run:"
+    warn "  git push --force-with-lease"
+    warn "If this is a shared branch, consider making a new commit instead."
+    log
+  fi
+
+  local amend_args=("--no-edit")
+
+  if [[ ${#messages[@]} -gt 0 || ${#coauthors[@]} -gt 0 ]]; then
+    amend_args=("${messages[@]}")
+
+    for ca in "${coauthors[@]}"; do
+      amend_args+=("-m" "Co-authored-by: $ca")
+    done
+  fi
+
+  _gce_amend() {
+    if [[ -n "$author_date" && -n "$committer_date" ]]; then
+      GIT_COMMITTER_DATE="$committer_date" git commit --amend --date="$author_date" "${amend_args[@]}"
+    elif [[ -n "$author_date" ]]; then
+      git commit --amend --date="$author_date" "${amend_args[@]}"
+    elif [[ -n "$committer_date" ]]; then
+      GIT_COMMITTER_DATE="$committer_date" git commit --amend "${amend_args[@]}"
+    else
+      git commit --amend "${amend_args[@]}"
+    fi
+  }
+
+  if [[ "$commit" == "$head" ]]; then
+    _gce_amend && ok "Last commit edited"
+    return $?
+  fi
+
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    err "Working tree must be clean before rewriting older commits"
+    return 1
+  fi
+
+  warn "Editing an older commit rewrites history"
+  info "Target: $(git log -1 --oneline "$commit")"
+  read -r "confirm?Continue? [y/N]: "
+
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    info "Aborted"
+    return 1
+  fi
+
+  local short_commit parent editor_script
+  short_commit="$(git rev-parse --short "$commit")"
+  parent="$(git rev-parse "$commit^" 2>/dev/null)"
+
+  editor_script="$(mktemp)"
+
+  cat > "$editor_script" <<EOF
+#!/usr/bin/env bash
+sed -i.bak "0,/^pick $short_commit /s//edit $short_commit /" "\$1"
+EOF
+
+  chmod +x "$editor_script"
+
+  if [[ -n "$parent" ]]; then
+    GIT_SEQUENCE_EDITOR="$editor_script" git rebase -i "$parent" || {
+      rm -f "$editor_script" "$editor_script.bak"
+      return 1
+    }
+  else
+    GIT_SEQUENCE_EDITOR="$editor_script" git rebase -i --root || {
+      rm -f "$editor_script" "$editor_script.bak"
+      return 1
+    }
+  fi
+
+  rm -f "$editor_script" "$editor_script.bak"
+
+  _gce_amend || return 1
+
+  git rebase --continue && ok "Commit edited"
 }
 
 ## Squash last N commits (soft reset)

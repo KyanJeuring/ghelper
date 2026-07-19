@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.3.0"
+GHELPER_VERSION="v1.3.1"
 
 # ==================================================
 # Configuration
@@ -59,7 +59,7 @@ err()  { _log_emit ERROR "$@"; }
 
 ### Confirmation prompt (internal)
 confirm() {
-  read -rp "$1 [y/N]: " ans
+  read -rp "$1 [y/n]: " ans
   [[ "$ans" =~ ^[Yy]$ ]]
 }
 
@@ -453,7 +453,7 @@ EOF
   warn "This can happen if SSH is not configured or access is not available for $host"
   log
   info "Falling back to HTTPS: $https_url"
-  read -rp "Clone via HTTPS instead? [y/N]: " ans
+  read -rp "Clone via HTTPS instead? [y/n]: " ans
   if [[ "$ans" =~ ^[Yy]$ ]]; then
     info "Cloning $user/$repo via HTTPS"
     if git clone "$https_url" "$target"; then
@@ -618,7 +618,7 @@ EOF
 
     if [[ -e "$target" ]]; then
       warn "$name already exists"
-      printf "Overwrite %s? [y/N]: " "$name"
+      printf "Overwrite %s? [y/n]: " "$name"
       read -r reply
 
       case "$reply" in
@@ -1635,7 +1635,7 @@ EOF
 
   warn "Editing an older commit rewrites history"
   info "Target: $(git log -1 --oneline "$commit")"
-  read -r "confirm?Continue? [y/N]: "
+  read -r "confirm?Continue? [y/n]: "
 
   if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
     info "Aborted"
@@ -2493,7 +2493,7 @@ EOF
       return 0
     }
   else
-    read -rp "Continue? [y/N] " confirm
+    read -rp "Continue? [y/n] " confirm
     [[ "$confirm" != "y" ]] && {
       err "Merge aborted"
       return 0
@@ -3103,7 +3103,7 @@ EOF
   warn "This will DELETE ALL TAGS (local and remote: $remote)"
   warn "This action cannot be undone easily."
   log
-  read -rp "Continue? [y/N]: " confirm
+  read -rp "Continue? [y/n]: " confirm
   [[ "$confirm" != "y" ]] && {
     info "Aborted."
     return 0

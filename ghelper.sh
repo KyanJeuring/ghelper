@@ -888,6 +888,8 @@ SHOWS:
   - Other HEAD movements recorded in the reflog
 
 NOTES:
+  - HEAD@{0} is the current HEAD position
+  - HEAD@{1} is usually the position before the last HEAD movement
   - Use grestorehead HEAD@{N} to restore a previous position
 EOF
     return 0
@@ -910,7 +912,7 @@ EOF
 
   git reflog \
     --date=relative \
-    --format='%h%x09%gd%x09%gs%x09%cr' \
+    --format='%h%x09%gd%x09%gs' \
     | head -n "$limit" \
     | awk -F '\t' '
   BEGIN {
@@ -930,20 +932,28 @@ EOF
   }
 
   {
-    hash     = $1
-    selector = $2
-    line     = $3
-    time     = "(" $4 ")"
+    hash = $1
+
+    # Actual numeric reflog position.
+    selector = "HEAD@{" (NR - 1) "}"
+
+    # With --date=relative, %gd contains something like:
+    # HEAD@{2 minutes ago}
+    time = $2
+    sub(/^HEAD@\{/, "", time)
+    sub(/\}$/, "", time)
+    time = "(" time ")"
+
+    line = $3
 
     type  = "ACTION"
     color = yellow
     msg   = line
 
-    # Commit
+    # Normal commit
     if (line ~ /^commit:/) {
       type  = "COMMIT"
       color = green
-
       sub(/^commit: /, "", msg)
     }
 
@@ -951,7 +961,6 @@ EOF
     else if (line ~ /^commit \(amend\):/) {
       type  = "AMEND"
       color = green
-
       sub(/^commit \(amend\): /, "", msg)
     }
 
@@ -959,7 +968,6 @@ EOF
     else if (line ~ /^commit \(initial\):/) {
       type  = "COMMIT"
       color = green
-
       sub(/^commit \(initial\): /, "", msg)
     }
 
@@ -967,7 +975,6 @@ EOF
     else if (line ~ /^checkout:/) {
       type  = "CHECKOUT"
       color = cyan
-
       sub(/^checkout: moving from /, "", msg)
     }
 
@@ -975,7 +982,6 @@ EOF
     else if (line ~ /^reset:/) {
       type  = "RESET"
       color = yellow
-
       sub(/^reset: moving to /, "", msg)
       msg = "-> " msg
     }
@@ -1002,7 +1008,6 @@ EOF
     else if (line ~ /^cherry-pick/) {
       type  = "CHERRY"
       color = magenta
-
       sub(/^cherry-pick: /, "", msg)
     }
 
@@ -1010,7 +1015,6 @@ EOF
     else if (line ~ /^revert/) {
       type  = "REVERT"
       color = red
-
       sub(/^revert: /, "", msg)
     }
 
@@ -1018,7 +1022,6 @@ EOF
     else if (line ~ /^branch:/) {
       type  = "BRANCH"
       color = cyan
-
       sub(/^branch: /, "", msg)
     }
 
@@ -1026,11 +1029,10 @@ EOF
     else if (line ~ /^clone:/) {
       type  = "CLONE"
       color = cyan
-
       sub(/^clone: /, "", msg)
     }
 
-    # Anything Git records that we have not explicitly classified.
+    # Anything else recorded in HEAD reflog
     else {
       type  = "ACTION"
       color = yellow

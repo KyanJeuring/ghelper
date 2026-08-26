@@ -475,8 +475,12 @@ EOF
 
 ## Add .gitignore from GHelper template
 create-gitignore() {
+  local GHELPER_ROOT
+  GHELPER_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+  local template="$GHELPER_ROOT/templates/.gitignore"
+
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
+    cat <<EOF
 USAGE:
   create-gitignore
 
@@ -487,7 +491,10 @@ EXAMPLES:
   create-gitignore      # Copy .gitignore template into the current repository root
 
 NOTES:
-  - Template source: <ghelper-dir>/templates/.gitignore
+  - Requires a user-provided template at:
+      $template
+  - GHelper does not install template files automatically
+  - Create the templates directory and add your own .gitignore template before using this command
   - Will not overwrite an existing .gitignore
 EOF
     return 0
@@ -500,23 +507,25 @@ EOF
     return 1
   fi
 
-  local GHELPER_ROOT
-  GHELPER_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-  local template="$GHELPER_ROOT/templates/.gitignore"
-
   [[ -f "$template" ]] || {
     err "Template not found: $template"
+    info "GHelper does not install template files automatically"
+    info "Create your own template at:"
+    info "  $template"
     return 1
   }
 
-  cp "$template" .gitignore
-  ok ".gitignore added to repository"
+  cp "$template" .gitignore && ok ".gitignore added to repository"
 }
 
 ## Add .gitattributes from GHelper template
 create-gitattributes() {
+  local GHELPER_ROOT
+  GHELPER_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+  local template="$GHELPER_ROOT/templates/.gitattributes"
+
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
+    cat <<EOF
 USAGE:
   create-gitattributes
 
@@ -527,7 +536,10 @@ EXAMPLES:
   create-gitattributes      # Copy .gitattributes template into the current repository root
 
 NOTES:
-  - Template source: <ghelper-dir>/templates/.gitattributes
+  - Requires a user-provided template at:
+      $template
+  - GHelper does not install template files automatically
+  - Create the templates directory and add your own .gitattributes template before using this command
   - Will not overwrite an existing .gitattributes
 EOF
     return 0
@@ -540,23 +552,25 @@ EOF
     return 1
   fi
 
-  local GHELPER_ROOT
-  GHELPER_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-  local template="$GHELPER_ROOT/templates/.gitattributes"
-
   [[ -f "$template" ]] || {
     err "Template not found: $template"
+    info "GHelper does not install template files automatically"
+    info "Create your own template at:"
+    info "  $template"
     return 1
   }
 
-  cp "$template" .gitattributes
-  ok ".gitattributes added to repository"
+  cp "$template" .gitattributes && ok ".gitattributes added to repository"
 }
 
 ## Apply all templates from GHelper to current repo
 gtemplate() {
+  local GHELPER_ROOT
+  GHELPER_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+  local template_dir="$GHELPER_ROOT/templates"
+
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
+    cat <<EOF
 USAGE:
   gtemplate
 
@@ -564,25 +578,28 @@ OPTIONS:
   -h, --help    Show this help message
 
 EXAMPLES:
-  gtemplate     # Apply all templates from <ghelper-dir>/templates/ to the current repo
+  gtemplate     # Apply all templates to the current repository
 
 NOTES:
+  - Applies all user-provided templates from:
+      $template_dir
+  - GHelper does not install template files automatically
+  - Create the templates directory and add your own template files before using this command
   - Prompts before overwriting existing files
   - Initializes a git repo if not already inside one
-  - Template source: <ghelper-dir>/templates/
 EOF
     return 0
   fi
 
-  local GHELPER_ROOT
-  GHELPER_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-  local template_dir="$GHELPER_ROOT/templates"
   local applied=0 skipped=0 overwritten=0 failed=0
   local reply name target template
   local old_nullglob repo_root
 
   [[ -d "$template_dir" ]] || {
     err "Template directory not found: $template_dir"
+    info "GHelper does not install template files automatically"
+    info "Create the directory and add your own templates:"
+    info "  mkdir -p \"$template_dir\""
     return 1
   }
 
@@ -598,10 +615,12 @@ EOF
       err "git init failed"
       return 1
     }
+
     repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
       err "git init succeeded but repo root could not be resolved"
       return 1
     }
+
     cd "$repo_root" || return 1
   fi
 
@@ -648,6 +667,7 @@ EOF
           skipped=$((skipped + 1))
           ;;
       esac
+
       continue
     fi
 

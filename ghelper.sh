@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.4.0"
+GHELPER_VERSION="v1.5.0"
 
 # ==================================================
 # Configuration
@@ -1389,13 +1389,11 @@ EOF
   fi
 
   if [[ $# -eq 0 ]]; then
-    git add .
-    ok "All changes staged"
-    return 0
+    git add . && ok "All changes staged"
+    return $?
   fi
 
-  git add -- "$@"
-  ok "Selected path(s) staged"
+  git add -- "$@" && ok "Selected path(s) staged"
 }
 
 ## Commit staged changes
@@ -1416,23 +1414,21 @@ EXAMPLES:
   gc 'Fix login bug' 'Details' -c 'Alice <alice@example.com>' -c 'Bob <bob@example.com>'
 
 NOTES:
-  - Automatically stages all changes before committing (runs ga)
+  - Only commits changes that are already staged
+  - Unstaged and untracked changes are left untouched
 EOF
     return 0
   fi
 
-  if git diff --quiet && git diff --cached --quiet; then
-    info "Nothing to commit"
+  if git diff --cached --quiet; then
+    info "Nothing staged to commit"
     return 0
   fi
-
-  # shellcheck disable=SC2119
-  ga || return 1
 
   if [[ $# -eq 0 ]]; then
     err "Commit message required"
     err "Usage:"
-    err "  gc 'Subjects'"
+    err "  gc 'Subject'"
     err "  gc 'Subject' 'Next paragraph' 'Another paragraph'"
     err "  gc 'Subject' -c 'Co-author <email>'"
     err "  gc 'Subject' 'Next paragraph' -c 'Co-author <email>'"
@@ -1449,7 +1445,11 @@ EOF
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -c)
-        [[ -z "${2:-}" ]] && { err "Missing co-author value"; return 1; }
+        [[ -z "${2:-}" ]] && {
+          err "Missing co-author value"
+          return 1
+        }
+
         coauthors+=("$2")
         shift 2
         ;;
@@ -1461,6 +1461,7 @@ EOF
   done
 
   local args=()
+
   for msg in "${messages[@]}"; do
     args+=("-m" "$msg")
   done
@@ -1703,14 +1704,27 @@ EOF
     log
   fi
 
-  local amend_args=("--no-edit")
+  local amend_args=()
 
-  if [[ ${#messages[@]} -gt 0 || ${#coauthors[@]} -gt 0 ]]; then
+  if [[ ${#messages[@]} -gt 0 ]]; then
     amend_args=("${messages[@]}")
 
     for ca in "${coauthors[@]}"; do
       amend_args+=("-m" "Co-authored-by: $ca")
     done
+
+  elif [[ ${#coauthors[@]} -gt 0 ]]; then
+    local existing_message
+    existing_message="$(git log -1 --format=%B "$commit")"
+
+    amend_args+=("-m" "$existing_message")
+
+    for ca in "${coauthors[@]}"; do
+      amend_args+=("-m" "Co-authored-by: $ca")
+    done
+
+  else
+    amend_args=("--no-edit")
   fi
 
   _gce_amend() {

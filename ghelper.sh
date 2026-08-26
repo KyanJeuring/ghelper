@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.3.1"
+GHELPER_VERSION="v1.4.0"
 
 # ==================================================
 # Configuration
@@ -875,7 +875,21 @@ EXAMPLES:
   ghead         # Show last 20 HEAD positions
   ghead 10      # Show last 10 HEAD positions
 
+SHOWS:
+  - Commits
+  - Amended commits
+  - Branch checkouts / switches
+  - Pulls
+  - Resets
+  - Merges
+  - Rebases
+  - Cherry-picks
+  - Reverts
+  - Other HEAD movements recorded in the reflog
+
 NOTES:
+  - HEAD@{0} is the current HEAD position
+  - HEAD@{1} is usually the position before the last HEAD movement
   - Use grestorehead HEAD@{N} to restore a previous position
 EOF
     return 0
@@ -896,14 +910,21 @@ EOF
   info "Recent HEAD positions (newest first)"
   log
 
-  git reflog --date=relative | head -n "$limit" | awk '
+  git reflog \
+    --date=relative \
+    --format='%h%x09%gd%x09%gs' \
+    | head -n "$limit" \
+    | awk -F '\t' '
   BEGIN {
-    blue   = "\033[0;34m"
-    green  = "\033[0;32m"
-    yellow = "\033[0;33m"
-    reset  = "\033[0m"
+    blue    = "\033[0;34m"
+    green   = "\033[0;32m"
+    yellow  = "\033[0;33m"
+    magenta = "\033[0;35m"
+    cyan    = "\033[0;36m"
+    red     = "\033[0;31m"
+    reset   = "\033[0m"
 
-    msg_width = 45
+    msg_width = 48
   }
 
   function trunc(s, w) {
@@ -911,43 +932,124 @@ EOF
   }
 
   {
-    idx  = NR - 1
     hash = $1
 
-    time = ""
-    if (match($0, /HEAD@\{([^}]+)\}/, m)) {
-      time = "(" m[1] ")"
-    }
+    # Actual numeric reflog position.
+    selector = "HEAD@{" (NR - 1) "}"
 
-    line = $0
-    sub(/^[a-f0-9]+ HEAD@\{[^}]+\}: /, "", line)
+    # With --date=relative, %gd contains something like:
+    # HEAD@{2 minutes ago}
+    time = $2
+    sub(/^HEAD@\{/, "", time)
+    sub(/\}$/, "", time)
+    time = "(" time ")"
 
+    line = $3
+
+    type  = "ACTION"
+    color = yellow
+    msg   = line
+
+    # Normal commit
     if (line ~ /^commit:/) {
-      sub(/^commit: /, "", line)
-      msg = trunc(line, msg_width)
-
-      printf "%sHEAD@{%d}%s  %s[COMMIT]%s  %-*s %s%s%s  %s\n",
-        blue, idx, reset,
-        green, reset,
-        msg_width, msg,
-        blue, time, reset,
-        hash
+      type  = "COMMIT"
+      color = green
+      sub(/^commit: /, "", msg)
     }
+
+    # Amended commit
+    else if (line ~ /^commit \(amend\):/) {
+      type  = "AMEND"
+      color = green
+      sub(/^commit \(amend\): /, "", msg)
+    }
+
+    # Initial commit
+    else if (line ~ /^commit \(initial\):/) {
+      type  = "COMMIT"
+      color = green
+      sub(/^commit \(initial\): /, "", msg)
+    }
+
+    # Checkout / switch
+    else if (line ~ /^checkout:/) {
+      type  = "CHECKOUT"
+      color = cyan
+      sub(/^checkout: moving from /, "", msg)
+    }
+
+    # Reset
     else if (line ~ /^reset:/) {
-      sub(/^reset: moving to /, "", line)
-      msg = trunc("reset -> " line, msg_width)
-
-      printf "%sHEAD@{%d}%s  %s[MOVE]%s  %-*s %s%s%s  %s\n",
-        blue, idx, reset,
-        yellow, reset,
-        msg_width, msg,
-        blue, time, reset,
-        hash
+      type  = "RESET"
+      color = yellow
+      sub(/^reset: moving to /, "", msg)
+      msg = "-> " msg
     }
+
+    # Pull
+    else if (line ~ /^pull/) {
+      type  = "PULL"
+      color = cyan
+    }
+
+    # Merge
+    else if (line ~ /^merge/) {
+      type  = "MERGE"
+      color = magenta
+    }
+
+    # Rebase
+    else if (line ~ /^rebase/) {
+      type  = "REBASE"
+      color = magenta
+    }
+
+    # Cherry-pick
+    else if (line ~ /^cherry-pick/) {
+      type  = "CHERRY"
+      color = magenta
+      sub(/^cherry-pick: /, "", msg)
+    }
+
+    # Revert
+    else if (line ~ /^revert/) {
+      type  = "REVERT"
+      color = red
+      sub(/^revert: /, "", msg)
+    }
+
+    # Branch operation
+    else if (line ~ /^branch:/) {
+      type  = "BRANCH"
+      color = cyan
+      sub(/^branch: /, "", msg)
+    }
+
+    # Clone
+    else if (line ~ /^clone:/) {
+      type  = "CLONE"
+      color = cyan
+      sub(/^clone: /, "", msg)
+    }
+
+    # Anything else recorded in HEAD reflog
+    else {
+      type  = "ACTION"
+      color = yellow
+    }
+
+    msg = trunc(msg, msg_width)
+
+    printf "%s%-10s%s  %s[%-8s]%s  %-*s %s%s%s  %s\n",
+      blue, selector, reset,
+      color, type, reset,
+      msg_width, msg,
+      blue, time, reset,
+      hash
   }'
 
   log
-  info "Tip: HEAD@{1} is usually the state before your last action"
+  info "Tip: HEAD@{1} is usually the state before your last HEAD movement"
   info "Restore with:"
   info "  grestorehead HEAD@{N}"
 }

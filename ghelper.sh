@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.5.0"
+GHELPER_VERSION="v1.6.0"
 
 # ==================================================
 # Configuration
@@ -69,7 +69,12 @@ confirm() {
 
 ### List of deprecated functions
 DEPRECATED_FUNCTIONS=(
-
+  gdiffs
+  gdiffc
+  gdiffp
+  gdiffb
+  gdiffpromote
+  whatwillpromote
 )
 
 ### Remove deprecated functions automatically
@@ -1074,243 +1079,452 @@ EOF
   info "  grestorehead HEAD@{N}"
 }
 
-## Show git diff for file(s)
+## Show git differences
 gdiff() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
 USAGE:
-  gdiff <file> [<file>...]
+  gdiff [<path>...]
+  gdiff -s [<path>...]
+  gdiff -c <ref1> <ref2> [<path>...]
+  gdiff -b <branch1> <branch2> [<path>...]
+  gdiff -r [<path>...]
 
-OPTIONS:
-  -h, --help    Show this help message
+COMPARISON OPTIONS:
+  -s, --staged              Show staged changes
+  -c, --commits A B         Compare two commits or revisions
+  -b, --branches A B        Compare two branches
+  -r, --remote              Compare origin/<current-branch> to HEAD
+
+DISPLAY OPTIONS:
+  -t, --stat                Show diff statistics
+  -n, --name-only           Show only changed file names
+  -w, --word-diff           Show word-level differences
+  --merge-base              Compare from merge base with --branches
+  --ignore-whitespace       Ignore whitespace changes
+  -U, --context <number>    Number of context lines to show
+
+OTHER:
+  --                        Treat all remaining arguments as paths
+  --explain                 Explain comparison direction and refs
+  -h, --help                Show this help message
 
 EXAMPLES:
-  gdiff src/main.sh       # Show diff for a single file
-  gdiff src/ tests/       # Show diff for multiple paths
+  gdiff
+  gdiff src/main.sh
+  gdiff -s
+  gdiff -s src/main.sh
+
+  gdiff -c HEAD~1 HEAD
+  gdiff src/main.sh -c HEAD~3 HEAD
+  gdiff -c HEAD@{2} HEAD src/
+
+  gdiff -b main dev
+  gdiff src/ -b main dev
+  gdiff -b main dev --merge-base
+
+  gdiff -r
+  gdiff README.md -r
+
+  gdiff -b main dev --stat
+  gdiff -c HEAD~5 HEAD --name-only
+  gdiff README.md --word-diff
+  gdiff --ignore-whitespace -b main dev
+  gdiff -U 5 src/main.sh
+
+  gdiff -- -filename-starting-with-dash
+
+TIP:
+  Run 'gdiff --explain' to understand comparison direction and refs.
 EOF
     return 0
   fi
 
-  if ! groot "$@"; then
-    return 1
-  fi
-
-  if [ $# -lt 1 ]; then
-    err "Usage: gdiff <file>"
-    return 1
-  fi
-
-  if git diff --quiet HEAD -- "$@"; then
-    warn "No differences found"
-    return 0
-  fi
-
-  git diff HEAD -- "$@"
-}
-
-## Show staged git diff for file(s)
-gdiffs() {
-  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  if [[ "${1:-}" == "--explain" ]]; then
     cat <<'EOF'
-USAGE:
-  gdiffs <file> [<file>...]
+GDIFF COMPARISON GUIDE
 
-OPTIONS:
-  -h, --help    Show this help message
+Comparisons are directional:
 
-EXAMPLES:
-  gdiffs src/main.sh      # Show staged diff for a single file
-  gdiffs src/             # Show staged diff for a directory
+  A  ->  B
+
+means:
+
+  Show what changed when going from A to B.
+
+
+COMMITS / REVISIONS
+
+  gdiff -c <ref1> <ref2>
+
+The first ref is the starting state.
+The second ref is the destination state.
+
+Example:
+
+  gdiff -c HEAD~1 HEAD
+
+  HEAD~1  ->  HEAD
+
+Shows what changed from the previous commit to the current commit.
+This is useful for seeing what the latest commit introduced.
+
+Reversing the refs:
+
+  gdiff -c HEAD HEAD~1
+
+  HEAD  ->  HEAD~1
+
+shows the comparison in the opposite direction.
+
+Additions become removals and removals become additions.
+
+
+COMMON REFS
+
+  HEAD          Current commit
+  HEAD~1        One commit before HEAD
+  HEAD~2        Two commits before HEAD
+  HEAD@{1}      Previous HEAD reflog position
+  abc123        Commit hash
+  tag           Tag resolving to a commit
+
+
+BRANCHES
+
+  gdiff -b <branch1> <branch2>
+
+The first branch is the starting state.
+The second branch is the destination state.
+
+Example:
+
+  gdiff -b main dev
+
+  main  ->  dev
+
+Shows what differs on dev compared with main.
+
+Reversing the branches:
+
+  gdiff -b dev main
+
+  dev  ->  main
+
+shows the comparison in the opposite direction.
+
+Additions and removals are therefore reversed.
+
+
+MERGE BASE
+
+  gdiff -b main dev --merge-base
+
+Instead of directly comparing the tips of main and dev, this uses the
+point where the branches diverged as the starting state:
+
+  merge-base(main, dev)  ->  dev
+
+This is useful for seeing what dev introduced since it branched away
+from main.
+
+
+PATHS
+
+Paths can be combined with any applicable comparison:
+
+  gdiff -c HEAD~3 HEAD src/
+  gdiff README.md -b main dev
+  gdiff -r src/
+
+Only matching paths are included in the comparison.
+
+Paths may appear before or after the comparison option:
+
+  gdiff src/main.sh -c HEAD~3 HEAD
+  gdiff -c HEAD~3 HEAD src/main.sh
+
+Both perform the same comparison.
+
+
+SPECIAL PATHS
+
+Use -- when a path starts with a dash:
+
+  gdiff -- -example.txt
+
+Everything after -- is treated as a path.
 EOF
     return 0
   fi
 
-  if ! groot "$@"; then
-    return 1
-  fi
+  groot || return 1
 
-  if [ $# -lt 1 ]; then
-    err "Usage: gdiffs <file>"
-    return 1
-  fi
+  local mode="working"
+  local mode_set=0
 
-  if git diff --cached --quiet -- "$@"; then
-    warn "No staged differences found"
-    return 0
-  fi
+  local ref1=""
+  local ref2=""
+  local branch=""
 
-  git diff --cached -- "$@"
-}
+  local merge_base=0
+  local parsing_options=1
 
-## Show git diff between two commits for file(s)
-gdiffc() {
-  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
-USAGE:
-  gdiffc <commit1> <commit2> [file]
+  local paths=()
+  local diff_args=()
 
-OPTIONS:
-  -h, --help    Show this help message
+  # Set comparison mode and prevent conflicting modes.
+  _gdiff_set_mode() {
+    local new_mode="$1"
 
-EXAMPLES:
-  gdiffc abc123 def456              # Diff between two commits
-  gdiffc abc123 def456 src/main.sh  # Diff for a specific file between commits
-EOF
-    return 0
-  fi
+    if (( mode_set )) && [[ "$mode" != "$new_mode" ]]; then
+      err "Only one comparison mode can be used at a time"
+      return 1
+    fi
 
-  if ! groot "$@"; then
-    return 1
-  fi
+    mode="$new_mode"
+    mode_set=1
+  }
 
-  if [ $# -lt 2 ]; then
-    err "Usage: gdiffc <commit1> <commit2> [file]"
-    return 1
-  fi
+  # Validate a commit-ish/ref.
+  _gdiff_validate_ref() {
+    local ref="$1"
 
-  local ref1="$1"
-  local ref2="$2"
-  shift 2
+    git rev-parse --verify "$ref^{commit}" >/dev/null 2>&1 || {
+      err "Commit or revision not found: $ref"
+      return 1
+    }
+  }
 
-  if git diff --quiet "$ref1" "$ref2" -- "$@"; then
-    warn "No differences found between $ref1 and $ref2"
-    return 0
-  fi
+  # Validate a local or remote branch.
+  _gdiff_validate_branch() {
+    local branch_name="$1"
 
-  git diff "$ref1" "$ref2" -- "$@"
-}
+    if git show-ref --verify --quiet "refs/heads/$branch_name"; then
+      return 0
+    fi
 
-## Show git diff between two branches for file(s)
-gdiffb() {
-  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
-USAGE:
-  gdiffb <branch1> <branch2> [file]
+    if git show-ref --verify --quiet "refs/remotes/$branch_name"; then
+      return 0
+    fi
 
-OPTIONS:
-  -h, --help    Show this help message
-
-EXAMPLES:
-  gdiffb main dev                     # Diff between main and dev
-  gdiffb main dev src/main.sh         # Diff for a specific file between branches
-EOF
-    return 0
-  fi
-
-  if ! groot "$@"; then
-    return 1
-  fi
-
-  if [ $# -lt 2 ]; then
-    err "Usage: gdiffb <branch1> <branch2> [file]"
-    return 1
-  fi
-
-  local branch1="$1"
-  local branch2="$2"
-  shift 2
-
-  if git diff --quiet "$branch1" "$branch2" -- "$@"; then
-    warn "No differences found between $branch1 and $branch2"
-    return 0
-  fi
-
-  git diff "$branch1" "$branch2" -- "$@"
-}
-
-## Show git diff against remote branch for file(s)
-gdiffp() {
-  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
-USAGE:
-  gdiffp <file> [<file>...]
-
-OPTIONS:
-  -h, --help    Show this help message
-
-EXAMPLES:
-  gdiffp src/main.sh      # Diff local file against origin/<current-branch>
-  gdiffp src/             # Diff directory against remote
-
-NOTES:
-  - Compares against origin/<current-branch>
-  - Fetches from origin before diffing
-EOF
-    return 0
-  fi
-
-  if ! groot "$@"; then
-    return 1
-  fi
-
-  if [ $# -lt 1 ]; then
-    err "Usage: gdiffp <file>"
-    return 1
-  fi
-
-  local branch
-  branch=$(git branch --show-current 2>/dev/null)
-
-  if [ -z "$branch" ]; then
-    err "Detached HEAD — cannot diff against origin"
-    return 1
-  fi
-
-  if ! git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
-    err "Remote branch origin/$branch does not exist"
-    return 1
-  fi
-
-  git fetch origin >/dev/null 2>&1 || {
-    err "Failed to fetch origin"
+    err "Branch not found: $branch_name"
     return 1
   }
 
-  if git diff --quiet "origin/$branch" -- "$@"; then
-    warn "No differences found against origin/$branch"
-    return 0
+  # Parse arguments.
+  while [[ $# -gt 0 ]]; do
+    # Everything after -- is a path.
+    if (( ! parsing_options )); then
+      paths+=("$1")
+      shift
+      continue
+    fi
+
+    case "$1" in
+      --)
+        parsing_options=0
+        shift
+        ;;
+
+      -s|--staged|--cached)
+        _gdiff_set_mode "staged" || return 1
+        shift
+        ;;
+
+      -c|--commits)
+        _gdiff_set_mode "commits" || return 1
+
+        [[ $# -ge 3 ]] || {
+          err "Usage: gdiff --commits <ref1> <ref2> [<path>...]"
+          return 1
+        }
+
+        ref1="$2"
+        ref2="$3"
+
+        _gdiff_validate_ref "$ref1" || return 1
+        _gdiff_validate_ref "$ref2" || return 1
+
+        shift 3
+        ;;
+
+      -b|--branches)
+        _gdiff_set_mode "branches" || return 1
+
+        [[ $# -ge 3 ]] || {
+          err "Usage: gdiff --branches <branch1> <branch2> [<path>...]"
+          return 1
+        }
+
+        ref1="$2"
+        ref2="$3"
+
+        _gdiff_validate_branch "$ref1" || return 1
+        _gdiff_validate_branch "$ref2" || return 1
+
+        shift 3
+        ;;
+
+      -r|--remote)
+        _gdiff_set_mode "remote" || return 1
+        shift
+        ;;
+
+      -t|--stat)
+        diff_args+=("--stat")
+        shift
+        ;;
+
+      -n|--name-only)
+        diff_args+=("--name-only")
+        shift
+        ;;
+
+      -w|--word-diff)
+        diff_args+=("--word-diff")
+        shift
+        ;;
+
+      --merge-base)
+        merge_base=1
+        shift
+        ;;
+
+      --ignore-whitespace)
+        diff_args+=("--ignore-all-space")
+        shift
+        ;;
+
+      -U|--context)
+        [[ -n "${2:-}" ]] || {
+          err "Missing context line count"
+          return 1
+        }
+
+        [[ "$2" =~ ^[0-9]+$ ]] || {
+          err "Context must be a non-negative number"
+          return 1
+        }
+
+        diff_args+=("-U$2")
+        shift 2
+        ;;
+
+      -h|--help)
+        err "Place -h or --help as the first argument"
+        return 1
+        ;;
+
+      --explain)
+        err "Place --explain as the first argument"
+        return 1
+        ;;
+
+      -*)
+        err "Unknown option: $1"
+        info "Use '--' before paths that begin with '-'"
+        return 1
+        ;;
+
+      *)
+        paths+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  # --merge-base only makes sense for branch comparisons.
+  if (( merge_base )) && [[ "$mode" != "branches" ]]; then
+    err "--merge-base can only be used with --branches"
+    return 1
   fi
 
-  git diff "origin/$branch" -- "$@"
-}
+  case "$mode" in
+    working)
+      if git diff --quiet HEAD -- "${paths[@]}"; then
+        info "No differences found"
+        return 0
+      fi
 
-## Show commits pending promotion
-gdiffpromote() {
-  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
-USAGE:
-  gdiffpromote
+      git diff "${diff_args[@]}" HEAD -- "${paths[@]}"
+      ;;
 
-OPTIONS:
-  -h, --help    Show this help message
+    staged)
+      if git diff --cached --quiet -- "${paths[@]}"; then
+        info "No staged differences found"
+        return 0
+      fi
 
-EXAMPLES:
-  gdiffpromote      # Show commits on dev that are not yet on main
-EOF
-    return 0
-  fi
+      git diff --cached "${diff_args[@]}" -- "${paths[@]}"
+      ;;
 
-  git log main..dev --oneline --decorate || true
-}
+    commits)
+      if git diff --quiet "$ref1" "$ref2" -- "${paths[@]}"; then
+        info "No differences found between $ref1 and $ref2"
+        return 0
+      fi
 
-## Show commits that would be promoted
-whatwillpromote() {
-  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
-USAGE:
-  whatwillpromote
+      git diff "${diff_args[@]}" "$ref1" "$ref2" -- "${paths[@]}"
+      ;;
 
-OPTIONS:
-  -h, --help    Show this help message
+    branches)
+      local branch_range
 
-EXAMPLES:
-  whatwillpromote     # List commits on dev not yet merged into main
-EOF
-    return 0
-  fi
+      if (( merge_base )); then
+        branch_range="$ref1...$ref2"
+      else
+        branch_range="$ref1..$ref2"
+      fi
 
-  info "Commits that would be promoted:"
-  git log main..dev --oneline --decorate || true
+      if git diff --quiet "$branch_range" -- "${paths[@]}"; then
+        if (( merge_base )); then
+          info "No differences found from merge base of $ref1 to $ref2"
+        else
+          info "No differences found between $ref1 and $ref2"
+        fi
+
+        return 0
+      fi
+
+      git diff "${diff_args[@]}" "$branch_range" -- "${paths[@]}"
+      ;;
+
+    remote)
+      branch="$(git branch --show-current 2>/dev/null)"
+
+      [[ -n "$branch" ]] || {
+        err "Detached HEAD — cannot diff against remote"
+        return 1
+      }
+
+      git remote get-url origin >/dev/null 2>&1 || {
+        err "Remote 'origin' does not exist"
+        return 1
+      }
+
+      info "Fetching origin"
+
+      git fetch origin >/dev/null 2>&1 || {
+        err "Failed to fetch origin"
+        return 1
+      }
+
+      git rev-parse --verify "origin/$branch" >/dev/null 2>&1 || {
+        err "Remote branch origin/$branch does not exist"
+        return 1
+      }
+
+      info "Comparing origin/$branch -> HEAD"
+
+      if git diff --quiet "origin/$branch" HEAD -- "${paths[@]}"; then
+        info "No differences found against origin/$branch"
+        return 0
+      fi
+
+      git diff "${diff_args[@]}" "origin/$branch" HEAD -- "${paths[@]}"
+      ;;
+  esac
 }
 
 ## Show active git SSH host for current repository

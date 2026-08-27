@@ -41,11 +41,12 @@ GHelper is for developers who:
 > Requires **Bash 4+** and a working `git` installation.
 
 - Linux: fully supported  
-- macOS: supported  
+- macOS: limited support; requires Bash 4+ and some commands may require GNU utilities
 - Windows: via **WSL** or **Git Bash**
 
 > [!WARNING]
-> PowerShell and CMD are not supported.
+> GHelper currently only supports Bash.
+> Zsh, Fish, PowerShell, and CMD are not supported.
 
 ---
 
@@ -70,11 +71,10 @@ git clone https://github.com/kyanjeuring/ghelper.git ~/.local/share/ghelper
 chmod +x ~/.local/share/ghelper/ghelper.sh
 ```
 
-Then add to your shell:
+Then add GHelper to your Bash configuration:
 
 ```bash
 echo 'source ~/.local/share/ghelper/ghelper.sh' >> ~/.bashrc
-# or ~/.zshrc
 ```
 
 ---
@@ -213,9 +213,9 @@ Templates come from:
 
 ## Configuration
 
-GHelper supports lightweight configuration via environment variables (similar to DStack).
+GHelper supports lightweight configuration via environment variables.
 
-Add these to your shell config (`.bashrc`, `.zshrc`) and reload your shell.
+Add these to your shell config `.bashrc` and reload your shell.
 
 ---
 
@@ -246,7 +246,7 @@ Branches listed here receive extra safety checks for:
 ### Example configuration
 
 ```bash
-# ~/.bashrc or ~/.zshrc
+# ~/.bashrc
 
 export GHELPER_SSH_HOST=github.com
 export GHELPER_PROTECTED_BRANCHES="main master release"

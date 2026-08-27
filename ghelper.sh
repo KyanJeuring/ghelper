@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.6.0"
+GHELPER_VERSION="v1.7.0"
 
 # ==================================================
 # Configuration
@@ -2745,145 +2745,364 @@ gmerge() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
 USAGE:
-  gmerge <source>
-  gmerge <source> <target>
+  gmerge <source> [<target>] [-p|--push]
 
 OPTIONS:
+  -p, --push    Push the target branch after a successful merge
   -h, --help    Show this help message
 
 EXAMPLES:
-  gmerge dev                  # Merge dev into current branch
-  gmerge dev main             # Merge dev into main
+  gmerge dev           # Merge dev into the current branch
+  gmerge dev main      # Merge dev into main
+  gmerge dev -p        # Merge dev into the current branch and push it
+  gmerge dev main -p   # Merge dev into main and push main
 
 NOTES:
+  - With one branch, merges source -> current branch
+  - With two branches, merges source -> target
+  - Source and target branches must exist locally
+  - Local-only branches are supported
+  - Remote-backed branches are updated using fast-forward only
   - Working tree must be clean
-  - Prompts for confirmation before merging into main
+  - Protected target branches require typing the branch name
   - Uses --no-ff merge strategy
+  - Does not push by default
+  - Use -p or --push to push the target branch after merging
+  - Returns to the original branch after a completed merge
+  - If merge conflicts occur, stays on the target branch for resolution
 EOF
     return 0
   fi
 
-  set -uo pipefail
+  local src_branch=""
+  local target_branch=""
+  local original=""
+  local push_after=0
 
-  local SRC_BRANCH TARGET_BRANCH
-  local original
-  original="$(git branch --show-current)"
+  local confirm_reply=""
+  local lockdir=""
+  local has_origin=0
+  local src_has_origin=0
+  local target_has_origin=0
 
-  if [[ $# -eq 1 ]]; then
-    SRC_BRANCH="$1"
-    TARGET_BRANCH="$original"
-  elif [[ $# -eq 2 ]]; then
-    SRC_BRANCH="$1"
-    TARGET_BRANCH="$2"
-  else
-    err "Usage:"
-    err "  gmerge <source>           # merge source -> current branch"
-    err "  gmerge <source> <target>  # merge source -> target"
-    return 0
-  fi
+  local result=0
+  local keep_target=0
+  local ahead=0
 
-  if [[ "$SRC_BRANCH" == "$TARGET_BRANCH" ]]; then
-    err "Source and target branches must be different"
-    return 0
-  fi
+  local branches=()
 
-  if ! _branch_exists "$SRC_BRANCH"; then
-    err "Source branch does not exist: '$SRC_BRANCH'"
-    warn "Available branches:"
-    git branch -a
-    return 0
-  fi
-
-  if ! _branch_exists "$TARGET_BRANCH"; then
-    err "Target branch does not exist: '$TARGET_BRANCH'"
-    warn "Available branches:"
-    git branch -a
-    return 0
-  fi
-
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    err "Working tree is dirty — commit or stash first"
-    return 0
-  fi
-
-  LOCKDIR="$(_tmp_dir)/git-merge.lock"
-  if ! mkdir "$LOCKDIR" 2>/dev/null; then
-    err "Another merge is already running"
-    return 0
-  fi
-
-  # shellcheck disable=SC2317,SC2329
-  cleanup() {
-    git merge --abort >/dev/null 2>&1 || true
-    git switch "$original" >/dev/null 2>&1 || \
-      err "Manual switch to $original required"
-    rmdir "$LOCKDIR" >/dev/null 2>&1 || true
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+    err "Not inside a Git repository"
+    return 1
   }
 
-  trap cleanup RETURN
-  trap 'err "Merge interrupted"; return 1' INT TERM
+  original="$(git branch --show-current 2>/dev/null)"
 
-  info "Fetching latest refs"
-  git fetch origin || return 1
+  [[ -n "$original" ]] || {
+    err "Detached HEAD — switch to a branch before merging"
+    return 1
+  }
 
-  info "Preparing merge ($SRC_BRANCH -> $TARGET_BRANCH)"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -p|--push)
+        push_after=1
+        shift
+        ;;
 
-  local _is_protected=0
-  local _protected
-  for _protected in $GHELPER_PROTECTED_BRANCHES; do
-    [[ "$TARGET_BRANCH" == "$_protected" ]] && { _is_protected=1; break; }
+      -h|--help)
+        err "Place -h or --help as the first argument"
+        return 1
+        ;;
+
+      -*)
+        err "Unknown option: $1"
+        return 1
+        ;;
+
+      *)
+        branches+=("$1")
+        shift
+        ;;
+    esac
   done
 
-  if (( _is_protected )); then
-    local branch_upper="${TARGET_BRANCH^^}"
-    warn "You are about to merge into ${branch_upper}"
-    read -rp "Type '${TARGET_BRANCH}' to confirm: " confirm
-    [[ "$confirm" != "$TARGET_BRANCH" ]] && {
-      err "Merge aborted"
-      return 0
-    }
-  else
-    read -rp "Continue? [y/n] " confirm
-    [[ "$confirm" != "y" ]] && {
-      err "Merge aborted"
-      return 0
-    }
-  fi
+  case "${#branches[@]}" in
+    1)
+      src_branch="${branches[0]}"
+      target_branch="$original"
+      ;;
 
-  if [[ "$(git branch --show-current)" != "$SRC_BRANCH" ]]; then
-    info "Switching to $SRC_BRANCH"
-    git switch "$SRC_BRANCH" || return 1
-  fi
+    2)
+      src_branch="${branches[0]}"
+      target_branch="${branches[1]}"
+      ;;
 
-  info "Pulling latest $SRC_BRANCH"
-  git pull origin "$SRC_BRANCH" || return 1
+    *)
+      err "Usage:"
+      err "  gmerge <source> [<target>] [-p|--push]"
+      return 1
+      ;;
+  esac
 
-  if [[ "$(git branch --show-current)" != "$TARGET_BRANCH" ]]; then
-    info "Switching to $TARGET_BRANCH"
-    git switch "$TARGET_BRANCH" || return 1
-  fi
-
-  info "Pulling latest $TARGET_BRANCH"
-  git pull origin "$TARGET_BRANCH" || return 1
-
-  info "Merging $SRC_BRANCH into $TARGET_BRANCH"
-  if ! git merge --no-ff "$SRC_BRANCH" \
-      -m "Merge $SRC_BRANCH into $TARGET_BRANCH"; then
-    err "Merge failed — resolve conflicts on $TARGET_BRANCH"
-    warn "After resolving:"
-    warn "  git commit"
-    warn "  git push origin $TARGET_BRANCH"
+  if [[ "$src_branch" == "$target_branch" ]]; then
+    err "Source and target branches must be different"
     return 1
   fi
 
-  info "Pushing $TARGET_BRANCH"
-  if ! git push origin "$TARGET_BRANCH"; then
-    err "Push failed, rolling back local $TARGET_BRANCH"
-    git reset --hard "origin/$TARGET_BRANCH"
+  if [[ -n "$(git status --porcelain)" ]]; then
+    err "Working tree is dirty — commit or stash first"
     return 1
   fi
 
-  ok "Merge successful ($SRC_BRANCH -> $TARGET_BRANCH)"
+  if git remote get-url origin >/dev/null 2>&1; then
+    has_origin=1
+  fi
+
+  if (( push_after )) && (( ! has_origin )); then
+    err "Cannot push — remote 'origin' does not exist"
+    return 1
+  fi
+
+  lockdir="$(_tmp_dir)/git-merge.lock"
+
+  if ! mkdir "$lockdir" 2>/dev/null; then
+    err "Another merge is already running"
+    return 1
+  fi
+
+  while :; do
+
+    if (( has_origin )); then
+      info "Fetching latest refs"
+
+      if ! git fetch origin; then
+        err "Failed to fetch origin"
+        result=1
+        break
+      fi
+    else
+      info "No origin remote found — using local branches only"
+    fi
+
+    if ! git show-ref --verify --quiet "refs/heads/$src_branch"; then
+      if (( has_origin )) &&
+         git show-ref --verify --quiet "refs/remotes/origin/$src_branch"; then
+
+        err "Source branch exists on origin but not locally: '$src_branch'"
+        info "Create the local branch first:"
+        info "  git switch --track origin/$src_branch"
+      else
+        err "Source branch does not exist: '$src_branch'"
+      fi
+
+      result=1
+      break
+    fi
+
+    if ! git show-ref --verify --quiet "refs/heads/$target_branch"; then
+      if (( has_origin )) &&
+         git show-ref --verify --quiet "refs/remotes/origin/$target_branch"; then
+
+        err "Target branch exists on origin but not locally: '$target_branch'"
+        info "Create the local branch first:"
+        info "  git switch --track origin/$target_branch"
+      else
+        err "Target branch does not exist: '$target_branch'"
+      fi
+
+      result=1
+      break
+    fi
+
+    if (( has_origin )) &&
+       git show-ref --verify --quiet "refs/remotes/origin/$src_branch"; then
+      src_has_origin=1
+    fi
+
+    if (( has_origin )) &&
+       git show-ref --verify --quiet "refs/remotes/origin/$target_branch"; then
+      target_has_origin=1
+    fi
+
+    info "Preparing merge ($src_branch -> $target_branch)"
+
+    local is_protected=0
+    local protected
+
+    for protected in $GHELPER_PROTECTED_BRANCHES; do
+      if [[ "$target_branch" == "$protected" ]]; then
+        is_protected=1
+        break
+      fi
+    done
+
+    if (( is_protected )); then
+      local branch_upper="${target_branch^^}"
+
+      warn "You are about to merge into ${branch_upper}"
+      read -rp "Type '${target_branch}' to confirm: " confirm_reply
+
+      if [[ "$confirm_reply" != "$target_branch" ]]; then
+        info "Merge aborted"
+        result=0
+        break
+      fi
+    else
+      read -rp "Continue? [y/n]: " confirm_reply
+
+      if [[ ! "$confirm_reply" =~ ^[Yy]$ ]]; then
+        info "Merge aborted"
+        result=0
+        break
+      fi
+    fi
+
+    if [[ "$(git branch --show-current)" != "$src_branch" ]]; then
+      info "Switching to $src_branch"
+
+      if ! git switch "$src_branch"; then
+        err "Failed to switch to $src_branch"
+        result=1
+        break
+      fi
+    fi
+
+    if (( src_has_origin )); then
+      info "Updating $src_branch from origin/$src_branch"
+
+      if ! git merge --ff-only "origin/$src_branch"; then
+        err "Could not fast-forward $src_branch"
+        warn "Local and remote history may have diverged"
+        warn "Resolve the branch manually before merging"
+        result=1
+        break
+      fi
+    else
+      info "$src_branch has no origin branch — using local state"
+    fi
+
+    if [[ "$(git branch --show-current)" != "$target_branch" ]]; then
+      info "Switching to $target_branch"
+
+      if ! git switch "$target_branch"; then
+        err "Failed to switch to $target_branch"
+        result=1
+        break
+      fi
+    fi
+
+    if (( target_has_origin )); then
+      info "Updating $target_branch from origin/$target_branch"
+
+      if ! git merge --ff-only "origin/$target_branch"; then
+        err "Could not fast-forward $target_branch"
+        warn "Local and remote history may have diverged"
+        warn "Resolve the branch manually before merging"
+        result=1
+        break
+      fi
+    else
+      info "$target_branch has no origin branch — using local state"
+    fi
+
+    if git merge-base --is-ancestor "$src_branch" "$target_branch"; then
+      info "$src_branch is already merged into $target_branch"
+      result=0
+      break
+    fi
+
+    info "Merging $src_branch into $target_branch"
+
+    if ! git merge --no-ff "$src_branch" \
+        -m "Merge $src_branch into $target_branch"; then
+
+      # A real merge conflict leaves MERGE_HEAD behind.
+      if git rev-parse --verify MERGE_HEAD >/dev/null 2>&1; then
+        keep_target=1
+
+        err "Merge conflicts detected on $target_branch"
+        warn "The merge has been left in progress"
+        info "Resolve the conflicts, then run:"
+        info "  git add <files>"
+        info "  git commit"
+        log
+        info "Or abort the merge with:"
+        info "  git merge --abort"
+      else
+        err "Merge failed"
+      fi
+
+      result=1
+      break
+    fi
+
+    if (( push_after )); then
+      info "Pushing $target_branch"
+
+      if ! git push origin "$target_branch"; then
+        err "Push failed"
+        warn "The local merge was kept on $target_branch"
+        info "Push it manually when ready:"
+        info "  git push origin $target_branch"
+
+        result=1
+        break
+      fi
+
+      ok "Merge successful ($src_branch -> $target_branch)"
+      ok "$target_branch pushed to origin"
+
+      result=0
+      break
+    fi
+
+    ok "Merge successful ($src_branch -> $target_branch)"
+    info "Merge is local only — $target_branch was not pushed"
+
+    if (( target_has_origin )); then
+      ahead="$(
+        git rev-list --count "origin/$target_branch..$target_branch" \
+          2>/dev/null || echo 0
+      )"
+
+      if (( ahead > 0 )); then
+        info "$target_branch is ahead of origin/$target_branch by $ahead commit(s)"
+      fi
+
+      info "Push when ready with:"
+      info "  git push origin $target_branch"
+    else
+      info "$target_branch does not currently exist on origin"
+
+      if (( has_origin )); then
+        info "Create and push it when ready with:"
+        info "  git push -u origin $target_branch"
+      fi
+    fi
+
+    info "Or use -p/--push with gmerge next time"
+
+    result=0
+    break
+  done
+
+  if (( ! keep_target )); then
+    if [[ "$(git branch --show-current 2>/dev/null)" != "$original" ]]; then
+      info "Returning to $original"
+
+      if ! git switch "$original"; then
+        err "Failed to return to original branch: $original"
+        err "Switch back manually with:"
+        err "  git switch $original"
+        result=1
+      fi
+    fi
+  fi
+
+  rmdir "$lockdir" >/dev/null 2>&1 || true
+
+  return "$result"
 }
 
 ## Switch to a branch, pull from origin if available, then show status

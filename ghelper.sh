@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.7.0"
+GHELPER_VERSION="v1.7.1"
 
 # ==================================================
 # Configuration
@@ -3117,73 +3117,117 @@ OPTIONS:
 
 EXAMPLES:
   gsw main          # Switch to main and pull latest if behind
-  gsw feature/foo   # Switch to local or remote branch
+  gsw feature/foo   # Switch to a local or remote branch
 
 NOTES:
   - Creates a local tracking branch if only found on origin
-  - Automatically pulls if the local branch is behind origin
+  - Automatically updates from origin if the local branch is behind
+  - Local-only branches are supported
+  - Repositories without an origin remote are supported
   - Working tree must be clean before switching
 EOF
     return 0
   fi
 
-  local branch="$1"
+  local branch="${1:-}"
+  local has_origin=0
 
-  [[ -z "$branch" ]] && {
+  [[ -n "$branch" ]] || {
     err "Usage: gsw <branch>"
-    return 0
+    return 1
   }
 
-  groot "$@" || return 0
+  groot || return 1
 
-  if ! git diff --quiet || ! git diff --cached --quiet; then
+  if [[ -n "$(git status --porcelain)" ]]; then
     err "Working tree is dirty"
     err "Commit or stash your changes before switching branches"
-    return 0
+    return 1
   fi
 
-  git fetch --prune origin >/dev/null 2>&1 || {
-    err "Failed to fetch origin"
-    return 0
-  }
+  if git remote get-url origin >/dev/null 2>&1; then
+    has_origin=1
+
+    info "Fetching latest refs"
+    git fetch --prune origin >/dev/null 2>&1 || {
+      err "Failed to fetch origin"
+      return 1
+    }
+  fi
 
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     info "Switching to local branch '$branch'"
-    git switch --quiet "$branch" || return 0
-  elif git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+
+    git switch --quiet "$branch" || {
+      err "Failed to switch to '$branch'"
+      return 1
+    }
+
+  elif (( has_origin )) &&
+       git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+
     info "Creating local branch '$branch' from origin/$branch"
-    git switch --quiet --track -c "$branch" "origin/$branch" || return 0
+
+    git switch --quiet --track -c "$branch" "origin/$branch" || {
+      err "Failed to create local branch '$branch'"
+      return 1
+    }
+
   else
-    err "Branch does not exist locally or on origin: '$branch'"
+    if (( has_origin )); then
+      err "Branch does not exist locally or on origin: '$branch'"
+    else
+      err "Local branch does not exist: '$branch'"
+    fi
+
+    return 1
+  fi
+
+  if (( ! has_origin )); then
+    ok "Switched to '$branch'"
     return 0
   fi
 
-  if [[ -n "$(git status --porcelain)" ]]; then
-    git status --short
-  fi
-
-  if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-    local ahead behind
-    behind=$(git rev-list --count "HEAD..origin/$branch" 2>/dev/null || echo 0)
-    ahead=$(git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)
-
-    if (( behind > 0 )); then
-      info "Pulling latest changes from origin/$branch ($behind commit(s))"
-      if ! git pull --ff-only --quiet origin "$branch"; then
-        warn "Pull failed — resolve any conflicts or rebase manually"
-        return 0
-      fi
-      ok "Switched to '$branch' and pulled latest changes"
-    else
-      ok "Switched to '$branch' (already up to date)"
-    fi
-
-    if (( ahead > 0 )); then
-      warn "Local branch is ahead of origin/$branch by $ahead commit(s)"
-    fi
-  else
+  if ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
     ok "Switched to '$branch' (no origin branch)"
+    return 0
   fi
+
+  local ahead=0
+  local behind=0
+
+  behind=$(
+    git rev-list --count "HEAD..origin/$branch" 2>/dev/null || echo 0
+  )
+
+  ahead=$(
+    git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0
+  )
+
+  if (( behind > 0 )); then
+    info "Updating from origin/$branch ($behind commit(s) behind)"
+
+    if ! git merge --ff-only "origin/$branch" >/dev/null; then
+      err "Could not fast-forward '$branch'"
+      warn "Local and remote history may have diverged"
+      warn "Resolve the branch manually before continuing"
+      return 1
+    fi
+
+    ok "Switched to '$branch' and updated from origin"
+
+    ahead=$(
+      git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0
+    )
+  else
+    ok "Switched to '$branch' (already up to date)"
+  fi
+
+  if (( ahead > 0 )); then
+    warn "Local branch is ahead of origin/$branch by $ahead commit(s)"
+  fi
+
+  return 0
 }
 
 ## Cherry-pick one or more commits to target branch

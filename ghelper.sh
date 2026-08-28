@@ -11,7 +11,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   IFS=$'\n\t'
 fi
 
-GHELPER_VERSION="v1.7.1"
+GHELPER_VERSION="v1.8.0"
 
 # ==================================================
 # Configuration
@@ -75,6 +75,7 @@ DEPRECATED_FUNCTIONS=(
   gdiffb
   gdiffpromote
   whatwillpromote
+  gstashlist
 )
 
 ### Remove deprecated functions automatically
@@ -2186,72 +2187,633 @@ EOF
   ok "Working tree cleaned"
 }
 
-## Stash all changes (including untracked)
+## Resolve and validate a stash reference
+_ghelper_resolve_stash_ref() {
+  local ref="stash@{0}"
+
+  [[ -n "${1:-}" ]] && ref="$1"
+
+  if [[ "$ref" =~ ^[0-9]+$ ]]; then
+    ref="stash@{$ref}"
+
+  elif [[ "$ref" == "stash" ]]; then
+    ref="stash@{0}"
+
+  elif [[ ! "$ref" =~ ^stash@\{[^}]+\}$ ]]; then
+    return 1
+  fi
+
+  git rev-parse --verify --quiet "$ref^{commit}" >/dev/null || return 1
+
+  printf '%s\n' "$ref"
+}
+
+
+## Stash changes, inspect stashes, or delete stashes
 gstash() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
 USAGE:
-  gstash [message]
+  gstash [message] [options] [-- <path>...]
+  gstash -l
+  gstash -s [stash] [--patch]
+  gstash -d <stash>
+  gstash --clear
 
-OPTIONS:
-  -h, --help    Show this help message
+STASH OPTIONS:
+  -p, --patch         Interactively select hunks to stash
+  -S, --staged        Stash staged changes only
+  -k, --keep-index    Keep staged changes in the index
+  -a, --all           Include ignored files
+
+MANAGEMENT:
+  -l, --list           List stashes
+  -s, --show           Show a stash (latest by default)
+  -d, --delete         Delete a specific stash
+      --clear          Delete all stashes after confirmation
+
+GENERAL:
+  -h, --help           Show this help message
 
 EXAMPLES:
-  gstash                  # Stash with default message 'wip'
-  gstash 'wip: auth fix'  # Stash with a custom message
+  gstash
+  gstash 'wip: auth fix'
+  gstash 'partial work' --patch
+  gstash --staged 'staged work'
+  gstash --all 'full environment'
+  gstash 'frontend work' -- src/
+  gstash -l
+  gstash -s stash@{2}
+  gstash -s stash@{2} --patch
+  gstash -d stash@{2}
+  gstash --clear
 
 NOTES:
-  - Includes untracked files (-u)
-  - Use gpop to restore the latest stash
+  - Normal stashes include untracked files, but not ignored files
+  - --all also includes ignored files such as .env
+  - Flags and messages/references may appear in either order
+  - Numeric stash references are supported: 2 = stash@{2}
+  - Use gpop to apply or pop an existing stash
 EOF
     return 0
   fi
 
-  if [[ -z "$1" ]]; then
-    warn "No stash message provided, using 'wip'"
+  local action="create"
+  local action_set=0
+
+  local patch=0
+  local staged=0
+  local keep_index=0
+  local include_all=0
+
+  local parsing_paths=0
+
+  local positionals=()
+  local paths=()
+
+  while [[ $# -gt 0 ]]; do
+    if (( parsing_paths )); then
+      paths+=("$1")
+      shift
+      continue
+    fi
+
+    case "$1" in
+      -h|--help)
+        gstash --help
+        return 0
+        ;;
+
+      -l|--list)
+        if (( action_set )) && [[ "$action" != "list" ]]; then
+          err "Only one stash management operation can be used at a time"
+          return 1
+        fi
+
+        action="list"
+        action_set=1
+        shift
+        ;;
+
+      -s|--show)
+        if (( action_set )) && [[ "$action" != "show" ]]; then
+          err "Only one stash management operation can be used at a time"
+          return 1
+        fi
+
+        action="show"
+        action_set=1
+        shift
+        ;;
+
+      -d|--delete)
+        if (( action_set )) && [[ "$action" != "delete" ]]; then
+          err "Only one stash management operation can be used at a time"
+          return 1
+        fi
+
+        action="delete"
+        action_set=1
+        shift
+        ;;
+
+      --clear)
+        if (( action_set )) && [[ "$action" != "clear" ]]; then
+          err "Only one stash management operation can be used at a time"
+          return 1
+        fi
+
+        action="clear"
+        action_set=1
+        shift
+        ;;
+
+      -p|--patch)
+        patch=1
+        shift
+        ;;
+
+      -S|--staged)
+        staged=1
+        shift
+        ;;
+
+      -k|--keep-index)
+        keep_index=1
+        shift
+        ;;
+
+      -a|--all)
+        include_all=1
+        shift
+        ;;
+
+      --)
+        parsing_paths=1
+        shift
+        ;;
+
+      -*)
+        err "Unknown option: $1"
+        return 1
+        ;;
+
+      *)
+        positionals+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  groot || return 1
+
+  if [[ "$action" != "create" ]]; then
+    if (( staged || keep_index || include_all )); then
+      err "Stash creation options cannot be used with --$action"
+      return 1
+    fi
+
+    if (( patch )) && [[ "$action" != "show" ]]; then
+      err "--patch can only be used when creating or showing a stash"
+      return 1
+    fi
+
+    if (( ${#paths[@]} > 0 )); then
+      err "Paths can only be used when creating a stash"
+      return 1
+    fi
   fi
 
-  git stash push -u -m "${1:-wip}" &&
-  ok "Changes stashed"
+  case "$action" in
+    list)
+      if (( ${#positionals[@]} > 0 )); then
+        err "--list cannot be combined with a stash message or reference"
+        return 1
+      fi
+
+      if ! git rev-parse --verify --quiet refs/stash >/dev/null; then
+        info "No stashes available"
+        return 0
+      fi
+
+      git stash list
+      ;;
+
+    show)
+      if (( ${#positionals[@]} > 1 )); then
+        err "Only one stash can be shown at a time"
+        return 1
+      fi
+
+      if ! git rev-parse --verify --quiet refs/stash >/dev/null; then
+        info "No stashes available"
+        return 0
+      fi
+
+      local requested="stash@{0}"
+
+      if (( ${#positionals[@]} > 0 )); then
+        requested="${positionals[0]}"
+      fi
+
+      local stash_ref
+
+      stash_ref="$(_ghelper_resolve_stash_ref "$requested")" || {
+        err "Stash not found: $requested"
+        return 1
+      }
+
+      if (( patch )); then
+        git stash show \
+          --patch \
+          --include-untracked \
+          "$stash_ref"
+      else
+        git stash show \
+          --stat \
+          --include-untracked \
+          "$stash_ref"
+      fi
+      ;;
+
+    delete)
+      if (( ${#positionals[@]} != 1 )); then
+        err "Usage: gstash --delete <stash>"
+        return 1
+      fi
+
+      if ! git rev-parse --verify --quiet refs/stash >/dev/null; then
+        info "No stashes available"
+        return 0
+      fi
+
+      local requested="${positionals[0]}"
+      local stash_ref
+
+      stash_ref="$(_ghelper_resolve_stash_ref "$requested")" || {
+        err "Stash not found: $requested"
+        return 1
+      }
+
+      git stash drop --quiet "$stash_ref" || {
+        err "Failed to delete stash: $stash_ref"
+        return 1
+      }
+
+      ok "Stash deleted: $stash_ref"
+      ;;
+
+    clear)
+      if (( ${#positionals[@]} > 0 )); then
+        err "--clear cannot be combined with a stash message or reference"
+        return 1
+      fi
+
+      if ! git rev-parse --verify --quiet refs/stash >/dev/null; then
+        info "No stashes available"
+        return 0
+      fi
+
+      local stash_count
+
+      stash_count="$(git stash list | wc -l)"
+      stash_count="${stash_count//[[:space:]]/}"
+
+      warn "This will permanently delete all $stash_count stash entry(s)"
+      printf 'Continue? [y/N]: '
+
+      local reply
+      read -r reply || return 1
+
+      case "$reply" in
+        y|Y|yes|Yes|YES)
+          ;;
+        *)
+          info "Stash clear cancelled"
+          return 0
+          ;;
+      esac
+
+      git stash clear || {
+        err "Failed to clear stashes"
+        return 1
+      }
+
+      ok "All stashes deleted"
+      ;;
+
+    create)
+      if (( ${#positionals[@]} > 1 )); then
+        err "Only one stash message can be specified"
+        err "Quote messages containing spaces"
+        return 1
+      fi
+
+      if (( patch && include_all )); then
+        err "--patch and --all cannot be used together"
+        return 1
+      fi
+
+      if (( staged && include_all )); then
+        err "--staged and --all cannot be used together"
+        return 1
+      fi
+
+      local message="${positionals[0]:-}"
+      local used_default_message=0
+
+      if [[ -z "$message" ]]; then
+        message="wip"
+        used_default_message=1
+      fi
+
+      local branch
+      branch="$(git branch --show-current 2>/dev/null)"
+
+      if [[ -z "$branch" ]]; then
+        branch="detached HEAD"
+      fi
+
+      local before_stash=""
+      local after_stash=""
+
+      before_stash="$(
+        git rev-parse --verify refs/stash 2>/dev/null || true
+      )"
+
+      local stash_args=(
+        push
+        --quiet
+      )
+
+      if (( patch )); then
+        stash_args+=(--patch)
+
+      elif (( staged )); then
+        stash_args+=(--staged)
+
+      elif (( include_all )); then
+        stash_args+=(--all)
+
+      else
+        stash_args+=(--include-untracked)
+      fi
+
+      if (( keep_index )); then
+        stash_args+=(--keep-index)
+      fi
+
+      stash_args+=(
+        -m
+        "$message"
+      )
+
+      if (( ${#paths[@]} > 0 )); then
+        stash_args+=(
+          --
+          "${paths[@]}"
+        )
+      fi
+
+      if (( patch && staged )); then
+        info "--patch takes priority over --staged"
+      fi
+
+      if (( patch )); then
+        info "Patch mode leaves untracked files untouched"
+
+      elif (( staged )); then
+        info "Staged mode leaves unstaged and untracked changes untouched"
+
+      elif (( include_all )); then
+        warn "Including ignored files such as .env"
+      fi
+
+      git stash "${stash_args[@]}" || {
+        err "Failed to stash changes"
+        return 1
+      }
+
+      after_stash="$(
+        git rev-parse --verify refs/stash 2>/dev/null || true
+      )"
+
+      if [[ -z "$after_stash" || "$after_stash" == "$before_stash" ]]; then
+        info "Nothing was stashed"
+        return 0
+      fi
+
+      if (( used_default_message )); then
+        warn "No stash message provided, used 'wip'"
+      fi
+
+      ok "Created stash@{0} on '$branch': $message"
+      ;;
+  esac
 }
 
-## Pop latest stash
+
+## Apply or pop a stash
 gpop() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
 USAGE:
+  gpop [stash] [options]
+
+OPTIONS:
+  -k, --keep           Apply without removing the stash
+      --index          Restore the original staged state
+  -b, --branch <name>  Restore the stash on a new branch
+  -h, --help           Show this help message
+
+EXAMPLES:
   gpop
+  gpop stash@{2}
+  gpop stash@{2} --keep
+  gpop stash@{2} --index
+  gpop stash@{2} --branch restore-auth
 
-OPTIONS:
-  -h, --help    Show this help message
-
-EXAMPLES:
-  gpop          # Apply and remove the latest stash entry
+NOTES:
+  - Defaults to the latest stash
+  - Failed applies keep the stash
+  - --branch requires a clean working tree
+  - Flags and stash references may appear in either order
+  - Numeric stash references are supported: 2 = stash@{2}
 EOF
     return 0
   fi
 
-  git stash pop &&
-  ok "Stash applied"
-}
+  local keep=0
+  local restore_index=0
+  local new_branch=""
 
-## List stashes
-gstashlist() {
-  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    cat <<'EOF'
-USAGE:
-  gstashlist
+  local positionals=()
 
-OPTIONS:
-  -h, --help    Show this help message
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        gpop --help
+        return 0
+        ;;
 
-EXAMPLES:
-  gstashlist    # List all stash entries
-EOF
+      -k|--keep)
+        keep=1
+        shift
+        ;;
+
+      --index)
+        restore_index=1
+        shift
+        ;;
+
+      -b|--branch)
+        if [[ -z "${2:-}" || "${2:-}" == -* ]]; then
+          err "Missing branch name"
+          err "Usage: gpop [stash] --branch <name>"
+          return 1
+        fi
+
+        if [[ -n "$new_branch" ]]; then
+          err "Only one branch can be specified"
+          return 1
+        fi
+
+        new_branch="$2"
+        shift 2
+        ;;
+
+      -*)
+        err "Unknown option: $1"
+        return 1
+        ;;
+
+      *)
+        positionals+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if (( ${#positionals[@]} > 1 )); then
+    err "Only one stash can be specified"
+    return 1
+  fi
+
+  groot || return 1
+
+  if ! git rev-parse --verify --quiet refs/stash >/dev/null; then
+    info "No stashes available"
     return 0
   fi
 
-  git stash list
+  local requested="stash@{0}"
+
+  if (( ${#positionals[@]} > 0 )); then
+    requested="${positionals[0]}"
+  fi
+
+  local stash_ref
+
+  stash_ref="$(_ghelper_resolve_stash_ref "$requested")" || {
+    err "Stash not found: $requested"
+    return 1
+  }
+
+  if [[ -n "$new_branch" ]]; then
+    git check-ref-format --branch "$new_branch" >/dev/null 2>&1 || {
+      err "Invalid branch name: $new_branch"
+      return 1
+    }
+
+    if git show-ref --verify --quiet "refs/heads/$new_branch"; then
+      err "Branch already exists: $new_branch"
+      return 1
+    fi
+
+    if [[ -n "$(git status --porcelain)" ]]; then
+      err "Working tree is dirty"
+      err "Commit or stash current changes before restoring to a new branch"
+      return 1
+    fi
+
+    if (( restore_index )); then
+      info "--index is already implied by --branch"
+    fi
+
+    if (( ! keep )); then
+      if ! git stash branch "$new_branch" "$stash_ref"; then
+        warn "Stash could not be restored cleanly on '$new_branch'"
+        warn "The stash was kept: $stash_ref"
+        warn "Resolve any conflicts manually before continuing"
+        return 1
+      fi
+
+      ok "Created '$new_branch' from $stash_ref; stash applied and removed"
+      return 0
+    fi
+
+    local base_commit
+
+    base_commit="$(
+      git rev-parse --verify "$stash_ref^1" 2>/dev/null
+    )" || {
+      err "Could not determine the original base of $stash_ref"
+      return 1
+    }
+
+    git switch --quiet -c "$new_branch" "$base_commit" || {
+      err "Failed to create branch: $new_branch"
+      return 1
+    }
+
+    if ! git stash apply --index "$stash_ref"; then
+      warn "Stash could not be applied cleanly on '$new_branch'"
+      warn "The stash was kept: $stash_ref"
+      warn "Resolve the conflicts manually before continuing"
+      return 1
+    fi
+
+    ok "Created '$new_branch' from $stash_ref; stash applied and kept"
+    return 0
+  fi
+
+  local stash_args=()
+
+  if (( restore_index )); then
+    stash_args+=(--index)
+  fi
+
+  stash_args+=("$stash_ref")
+
+  if (( keep )); then
+    if ! git stash apply "${stash_args[@]}"; then
+      warn "Stash could not be applied cleanly"
+      warn "The stash was kept: $stash_ref"
+      warn "Resolve the conflicts manually before continuing"
+      return 1
+    fi
+
+    if (( restore_index )); then
+      ok "Stash applied with index state and kept: $stash_ref"
+    else
+      ok "Stash applied and kept: $stash_ref"
+    fi
+
+    return 0
+  fi
+
+  if ! git stash pop "${stash_args[@]}"; then
+    warn "Stash could not be applied cleanly"
+    warn "The stash was not removed: $stash_ref"
+    warn "Resolve the conflicts manually before continuing"
+    return 1
+  fi
+
+  if (( restore_index )); then
+    ok "Stash applied with index state and removed: $stash_ref"
+  else
+    ok "Stash applied and removed: $stash_ref"
+  fi
 }
 
 # ==================================================
